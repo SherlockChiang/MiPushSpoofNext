@@ -41,22 +41,29 @@
 
 ## 安装
 
-1. 在 root 管理器中安装 `MiPushSpoofNext-v0.1.0.zip`。
+1. 在 root 管理器中安装 `MiPushSpoofNext-v0.1.1.zip`。
 2. 确保 Zygisk provider 已启用，然后重启。
-3. 点击模块的“操作/Action”按钮扫描已安装 APK；或执行：
+3. 在 KernelSU/APatch 管理器中打开模块的 WebUI，即可图形化扫描和管理应用；Magisk
+   管理器没有通用 WebUI 入口时，点击模块的“操作/Action”按钮作为兼容入口。Action 会先
+   扫描已安装 APK；在 15 秒内按音量加可进入应用管理，按音量减或等待则只保存扫描结果。
+4. 在应用管理中，音量减循环切换“跟随自动扫描 → 始终禁用 → 始终启用”，音量加确认并
+   进入下一项。修改后还可选择立即强停应用使设置生效。
 
-   ```sh
-   su -c /data/adb/modules/mipush-spoof-next/bin/mipushctl scan
-   ```
+不方便使用音量键时，可执行同样清晰的三态命令：
 
-4. 审核自动生成的目标列表：
+```sh
+# 查看状态
+su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl list'
+su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl app-status com.example.app'
 
-   ```sh
-   su -c /data/adb/modules/mipush-spoof-next/bin/mipushctl list
-   ```
+# 整个应用：跟随自动扫描 / 始终启用 / 始终禁用
+su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl app com.example.app auto'
+su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl app com.example.app enable --apply'
+su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl app com.example.app disable --apply'
+```
 
-5. 强行停止并重新启动命中的应用。若应用处于 Magisk 强制 DenyList/卸载列表，先将其移出，
-   否则 Zygisk 模块不会进入该进程。
+`--apply` 会在规则原子保存后强停应用；省略时可稍后自行重启。若应用处于 Magisk 强制
+DenyList/卸载列表，需先将其移出，否则 Zygisk 模块不会进入该进程。
 
 扫描器默认检查已安装第三方包（包括 `/data/app` 中的系统化第三方）的 PackageManager
 组件标记：MiPush 广播 action、`PushMessageHandler`、`MessageHandleService` 和
@@ -65,13 +72,30 @@
 运行 ART `dexlist` 和压缩 dex 回退，用于加固/动态注册或深度混淆 SDK，但会明显变慢并受
 `scan_max_apk_bytes` 限制。扫描器是安全的候选生成器，不是绝对判断；拆分 APK、加固/动态
 加载或深度混淆仍可能造成漏报。若包枚举、PackageManager 查询或 APK 读取失败，扫描会返回
-错误并保留上一次自动规则；快速模式跳过的包会在日志中列出。可手动维护规则：
+错误并保留上一次自动规则；快速模式跳过的包会在日志中列出。高级用户仍可精确管理单个
+子进程；旧版 `add/deny/remove` 命令也继续兼容：
 
 ```sh
-su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl add com.example.app'
-su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl deny com.example.app:camera'
-su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl remove com.example.app'
+su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl disable com.example.app:camera'
+su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl auto com.example.app:camera'
 ```
+
+整包 `app` 命令会清理该包已有的包级和子进程手工规则，再写入唯一的新状态，避免 allow 与
+deny 同时残留。`auto` 表示删除手工覆盖；如果扫描仍命中该包，它仍会自动启用。
+
+WebUI 页面会显示自动命中、始终启用、始终禁用、自定义进程规则和受保护状态；支持包名
+筛选、手动添加漏扫包，以及“修改后立即停止应用”。WebUI 只调用模块自带的 root CLI，
+不会把配置或日志上传到网络；Magisk 用户可使用同一 CLI 和 Action 入口。
+
+## 更新
+
+从 `v0.1.1` 起，`module.prop` 提供标准 `updateJson`，由支持该字段的 root 管理器比较
+`versionCode` 并从 GitHub Release 下载对应 ZIP。`module.prop` 读取最新 Release 内的
+`update.json` 附件；其中的下载与更新说明链接再固定到同一版本标签，避免 `main` 分支先更新、
+Release 附件尚未就绪时误报更新。该格式与 Magisk 官方模块更新格式一致，KernelSU 模块指南
+也声明支持 `updateJson`。推送 `v*` 标签后，GitHub Actions 会从已通过验证的同一构建任务
+创建或更新 Release，并上传安装包、对应源码包、[`update.json`](update.json) 与
+[`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 规则语义
 
@@ -148,7 +172,7 @@ MiPush SDK 版本均兼容；请按 [测试清单](docs/TESTING.md) 补做自己
 - 不伪装 PackageManager、Telephony、Settings、设备标识符或 Play Integrity。若未来实测新
   MiPush SDK 确实依赖这些面，建议作为独立、可选 LSPosed adapter，而不是扩大默认 Zygisk
   攻击面。
-- 目前只有上述 XQ-CQ72 的单机冒烟，尚未形成跨 ROM/页大小/SDK 的兼容矩阵。`v0.1.0` 仍是
+- 目前只有上述 XQ-CQ72 的单机冒烟，尚未形成跨 ROM/页大小/SDK 的兼容矩阵。`v0.1.1` 仍是
   实验性工程基线；报告实机结果时应附 Android 版本、root/Zygisk provider、目标包、XMSF
   版本及 `MiPushSpoofNext` 日志。
 

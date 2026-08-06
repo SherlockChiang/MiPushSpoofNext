@@ -2,6 +2,8 @@
 *.sh text eol=lf
 *.conf text eol=lf
 *.properties text eol=lf
+*.json text eol=lf
+*.html text eol=lf
 module.prop text eol=lf
 mipushctl text eol=lf
 update-binary text eol=lf
@@ -9,4 +11,3 @@ updater-script text eol=lf
 *.mk text eol=lf
 *.cpp text eol=lf
 *.hpp text eol=lf
-

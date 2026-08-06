@@ -43,6 +43,22 @@ def evaluate(rules, package_name, process):
     return allow and not deny
 
 
+def set_app_state(rules, package_name, state):
+    retained = []
+    for raw in rules:
+        candidate = raw[1:] if raw.startswith("!") else raw
+        if candidate == package_name or candidate.startswith(package_name + ":"):
+            continue
+        retained.append(raw)
+    if state == "enabled":
+        retained.append(package_name)
+    elif state == "disabled":
+        retained.append("!" + package_name)
+    elif state != "auto":
+        raise ValueError(state)
+    return retained
+
+
 def built_in_denied(package_name, process, uid):
     app_id = uid % 100000 if uid >= 0 else uid
     if 0 <= app_id < 10000:
@@ -110,6 +126,19 @@ class RuleModelTest(unittest.TestCase):
                                   "com.example.app", "com.example.app:camera"))
         self.assertTrue(evaluate(["com.example.app", "!com.example.app:camera"],
                                  "com.example.app", "com.example.app:push"))
+
+    def test_app_state_transition_removes_conflicting_and_process_rules(self):
+        old = ["com.example.app", "!com.example.app", "!com.example.app:camera",
+               "com.example.application"]
+        self.assertEqual(set_app_state(old, "com.example.app", "enabled"),
+                         ["com.example.application", "com.example.app"])
+        self.assertEqual(set_app_state(old, "com.example.app", "disabled"),
+                         ["com.example.application", "!com.example.app"])
+
+    def test_app_auto_clears_only_the_selected_package_overrides(self):
+        old = ["!com.example.app", "com.example.app:push", "com.example.application"]
+        self.assertEqual(set_app_state(old, "com.example.app", "auto"),
+                         ["com.example.application"])
 
     def test_builtin_deny_covers_privileged_and_manager_processes(self):
         self.assertTrue(built_in_denied("com.example.app", "com.example.app", 1000))

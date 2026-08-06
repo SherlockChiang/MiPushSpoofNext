@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>MiPush Spoof Next</title>
+<style>
+:root{color-scheme:light dark;--bg:#f4f6f8;--card:#fff;--fg:#17202a;--muted:#687581;--line:#dce2e8;--blue:#1769e0;--bluebg:#e8f0ff;--red:#b3261e;--redbg:#ffebe9;--green:#137333;--greenbg:#e6f4ea}
+@media(prefers-color-scheme:dark){:root{--bg:#101418;--card:#1b2128;--fg:#edf2f7;--muted:#aab5c0;--line:#36404b;--blue:#8ab4f8;--bluebg:#233653;--red:#ff8a80;--redbg:#402326;--green:#81c995;--greenbg:#1e3828}}
+*{box-sizing:border-box}body{margin:0;padding:max(18px,env(safe-area-inset-top)) 15px max(24px,env(safe-area-inset-bottom));background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Noto Sans SC",sans-serif}main{max-width:780px;margin:auto}
+h1{margin:0;font-size:24px}h2{margin:0;font-size:18px}p{margin:7px 0}.muted{color:var(--muted)}
+.header{display:flex;align-items:center;gap:12px}.logo{display:grid;place-items:center;width:44px;height:44px;border-radius:13px;background:var(--blue);color:#fff;font-size:22px}
+.card{margin-top:14px;padding:16px;background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 2px 10px #00000014}
+.toolbar,.form{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:13px}button,input{min-height:42px;border-radius:10px;border:1px solid var(--line);font:inherit}button{padding:0 13px;background:var(--card);color:var(--fg);cursor:pointer}button.primary{background:var(--blue);border-color:var(--blue);color:#fff}button.danger{color:var(--red)}button:disabled{opacity:.5;cursor:wait}input{padding:0 11px;background:var(--card);color:var(--fg)}.form input{flex:1 1 230px}.check{display:inline-flex;align-items:center;gap:7px;color:var(--muted)}.check input{min-height:18px;width:18px;accent-color:var(--blue)}
+#status{min-height:24px;margin-top:10px;color:var(--muted)}#status.ok{color:var(--green)}#status.error{color:var(--red)}
+#filter{width:100%;margin-top:6px}.unsupported{border-color:#c58a00;background:#fff8df}.unsupported[hidden]{display:none}@media(prefers-color-scheme:dark){.unsupported{background:#3b3218}}
+table{width:100%;margin-top:12px;border-collapse:collapse}th,td{padding:10px 5px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}th{font-size:13px;color:var(--muted)}td.pkg{font:13px ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}.app-name{display:block;font-weight:600}.badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;white-space:nowrap}.badge.enabled,.badge.auto-enabled{color:var(--green);background:var(--greenbg)}.badge.disabled{color:var(--red);background:var(--redbg)}.badge.auto-inactive,.badge.custom,.badge.protected{color:var(--muted);background:#e9edf1}@media(prefers-color-scheme:dark){.badge.auto-inactive,.badge.custom,.badge.protected{background:#303840}}
+.actions{display:flex;justify-content:flex-end;gap:5px;flex-wrap:wrap}.actions button{min-height:34px;padding:0 8px;font-size:12px}.empty{text-align:center;padding:20px 5px;color:var(--muted)}details{margin-top:12px}pre{max-height:220px;overflow:auto;padding:10px;border-radius:9px;background:var(--bg);color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}.tip{margin-top:10px;font-size:13px;color:var(--muted)}code{font-family:ui-monospace,SFMono-Regular,monospace}
+</style>
+</head>
+<body>
+<main>
+<section class="header" aria-labelledby="title"><div class="logo" aria-hidden="true">米</div><div><h1 id="title">MiPush Spoof Next</h1><div class="muted">按应用管理 MiPush 机型伪装</div></div></section>
+<section class="card">
+<h2>应用列表</h2>
+<p class="muted">扫描更新自动候选；手动状态会保留。禁用应用及其子进程不会伪装。</p>
+<div class="toolbar"><button id="scan" class="primary" type="button">扫描已安装应用</button><button id="refresh" type="button">刷新状态</button><label class="check"><input id="apply" type="checkbox"> 修改后立即停止应用</label></div>
+<div id="status" role="status" aria-live="polite">正在连接管理器接口…</div>
+<div id="unsupported" class="card unsupported" hidden><strong>当前管理器没有提供 WebUI root 接口</strong><p>请使用模块 Action 按钮，或执行：</p><pre>su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl scan'
+su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl app com.example.app disable --apply'</pre></div>
+<label class="muted" for="filter">筛选包名</label><input id="filter" type="search" placeholder="例如 com.sankuai.meituan" autocomplete="off">
+<div id="table"><div class="empty">尚未读取应用状态，请点击扫描或刷新。</div></div>
+<details><summary>最近一次扫描输出</summary><pre id="output">暂无</pre></details>
+</section>
+<section class="card"><h2>手动添加应用</h2><p class="muted">自动扫描漏报时，输入完整包名并设为始终启用。</p><form id="add" class="form"><input id="pkg" inputmode="text" placeholder="com.example.app" autocomplete="off" required><button class="primary" type="submit">添加并启用</button></form><div class="tip">规则修改只对新启动的进程生效；勾选上方选项可自动强停。</div></section>
+</main>
+<script type="module">
+const CONTROL="/data/adb/modules/mipush-spoof-next/bin/mipushctl";
+const PACKAGE_RE=/^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+let execRoot=null,toastFn=null,packageInfoFn=null,apiError=null,rows=[],busy=false;
+const byId=(id)=>document.getElementById(id);
+const status=byId("status"),output=byId("output");
+function message(text,kind){status.textContent=text;status.className=kind||""}
+function quote(value){return "'" + value.replace(/'/g,"'\\''") + "'"}
+function validPackage(value){return PACKAGE_RE.test(value)&&value.indexOf(".")>=0&&value.indexOf("..")<0&&!value.endsWith(".")}
+function esc(value){return String(value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
+async function run(command){
+  if(!execRoot)throw new Error(apiError||"WebUI root 接口不可用");
+  const result=await execRoot(command),errno=Number(result&&result.errno||0);
+  const stdout=String(result&&result.stdout||""),stderr=String(result&&result.stderr||"");
+  if(errno!==0)throw new Error(stderr||stdout||("命令失败（"+errno+"）"));
+  return stdout;
+}
+function label(state){return({"auto-enabled":"自动 · 已启用","auto-inactive":"自动 · 未命中",enabled:"始终启用",disabled:"始终禁用",custom:"自定义进程规则",protected:"受保护"})[state]||state}
+function parse(text){return text.split(/\r?\n/).filter(Boolean).map((line)=>{const tab=line.indexOf("\t");if(tab<1)return null;const state=line.slice(0,tab),pkg=line.slice(tab+1).trim();return validPackage(pkg)?{state:state,package:pkg,label:""}:null}).filter(Boolean).sort((a,b)=>a.package.localeCompare(b.package))}
+async function addLabels(){
+  if(!packageInfoFn||!rows.length)return;
+  try{
+    let info=await Promise.resolve(packageInfoFn(rows.map((row)=>row.package)));
+    if(typeof info==="string")info=JSON.parse(info);
+    if(!Array.isArray(info))return;
+    const labels=new Map(info.map((item)=>[item.packageName,item.appLabel]));
+    rows.forEach((row)=>{row.label=labels.get(row.package)||""});
+  }catch(_error){}
+}
+function render(){
+  const query=byId("filter").value.trim().toLowerCase(),visible=rows.filter((row)=>row.package.toLowerCase().indexOf(query)>=0||row.label.toLowerCase().indexOf(query)>=0);
+  if(!visible.length){byId("table").innerHTML='<div class="empty">没有匹配的应用。请先扫描，或手动添加包名。</div>';return}
+  const body=visible.map((row)=>{
+    const buttons=row.state==="protected"?"<span class=\"muted\">不可修改</span>":
+      "<button type=\"button\" data-pkg=\""+esc(row.package)+"\" data-state=\"auto\">自动</button>"+
+      "<button type=\"button\" data-pkg=\""+esc(row.package)+"\" data-state=\"enabled\">启用</button>"+
+      "<button type=\"button\" class=\"danger\" data-pkg=\""+esc(row.package)+"\" data-state=\"disabled\">禁用</button>";
+    const name=row.label?"<span class=\"app-name\">"+esc(row.label)+"</span>":"";
+    return "<tr><td><span class=\"badge "+esc(row.state)+"\">"+esc(label(row.state))+"</span></td><td class=\"pkg\">"+name+esc(row.package)+"</td><td><div class=\"actions\">"+buttons+"</div></td></tr>";
+  }).join("");
+  byId("table").innerHTML="<table><thead><tr><th>状态</th><th>包名</th><th>操作</th></tr></thead><tbody>"+body+"</tbody></table>";
+}
+async function load(){
+  const text=await run(CONTROL+" apps");rows=parse(text);await addLabels();render();message(rows.length+" 个应用状态已加载","ok");
+}
+async function scan(){
+  if(busy)return;busy=true;byId("scan").disabled=true;message("正在扫描，较大的 APK 可能需要一点时间…");
+  try{output.textContent=await run(CONTROL+" scan")||"扫描完成。";await load();message("扫描完成，发现 "+rows.length+" 个候选应用","ok")}
+  catch(error){message(error.message,"error")}finally{busy=false;byId("scan").disabled=false}
+}
+async function changeState(pkg,state){
+  if(busy)return;busy=true;message("正在设置 "+pkg+"…");
+  try{const apply=byId("apply").checked?" --apply":"";const text=await run(CONTROL+" app "+quote(pkg)+" "+state+apply);output.textContent=text||output.textContent;if(toastFn)toastFn(pkg+"："+label(state==="enabled"?"enabled":state==="disabled"?"disabled":"auto-enabled"));await load()}
+  catch(error){message(error.message,"error")}finally{busy=false}
+}
+byId("scan").addEventListener("click",scan);byId("refresh").addEventListener("click",()=>{if(!busy)load().catch((e)=>message(e.message,"error"))});byId("filter").addEventListener("input",render);
+byId("table").addEventListener("click",(event)=>{const button=event.target.closest("button[data-pkg]");if(button)changeState(button.dataset.pkg,button.dataset.state)});
+byId("add").addEventListener("submit",(event)=>{event.preventDefault();const pkg=byId("pkg").value.trim();if(!validPackage(pkg)){message("请输入有效的 Android 包名，例如 com.example.app","error");return}changeState(pkg,"enabled");byId("pkg").value=""});
+let callbackId=0;
+function bridgeExec(command){
+  return new Promise((resolve,reject)=>{
+    const name="mpsn_exec_"+Date.now()+"_"+(callbackId++);
+    window[name]=(errno,stdout,stderr)=>{delete window[name];resolve({errno:errno,stdout:stdout,stderr:stderr})};
+    try{window.ksu.exec(command,"{}",name)}catch(error){delete window[name];reject(error)}
+  });
+}
+async function connectApi(){
+  if(window.ksu&&typeof window.ksu.exec==="function"){
+    execRoot=bridgeExec;toastFn=typeof window.ksu.toast==="function"?((text)=>window.ksu.toast(text)):null;packageInfoFn=typeof window.ksu.getPackagesInfo==="function"?window.ksu.getPackagesInfo.bind(window.ksu):null;return;
+  }
+  const api=await import("kernelsu");execRoot=api.exec;toastFn=api.toast;packageInfoFn=api.getPackagesInfo;
+}
+try{await connectApi();message("已连接 root WebUI 接口","ok");await load()}
+catch(error){apiError="KernelSU/APatch WebUI API 不可用";byId("unsupported").hidden=false;message(apiError+"；请使用 Action 或 CLI。","error")}
+</script>
+</body>
+</html>

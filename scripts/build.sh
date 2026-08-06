@@ -57,5 +57,7 @@ python3 "$ROOT/scripts/package_source.py" "$ROOT" "$TEMP_SOURCE_ZIP"
 
 mv -f "$TEMP_ZIP" "$ZIP"
 mv -f "$TEMP_SOURCE_ZIP" "$SOURCE_ZIP"
+cp -f "$ROOT/update.json" "$OUT/update.json"
+cp -f "$ROOT/CHANGELOG.md" "$OUT/CHANGELOG.md"
 echo "Built: $ZIP"
 echo "Built: $SOURCE_ZIP"

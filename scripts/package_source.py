@@ -8,6 +8,7 @@ import zipfile
 
 ROOT_FILES = {
     ".gitattributes", ".gitignore", "CHANGELOG.md", "LICENSE", "NOTICE.md", "README.md",
+    "update.json",
 }
 SOURCE_DIRECTORIES = {".github", "docs", "module", "native/jni", "scripts", "tests"}
 

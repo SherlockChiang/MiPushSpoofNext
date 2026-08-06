@@ -97,6 +97,10 @@ try {
     if (Test-Path -LiteralPath $SourceZip) { Remove-Item -LiteralPath $SourceZip -Force }
     Move-Item -LiteralPath $TemporaryZip -Destination $Zip -Force
     Move-Item -LiteralPath $TemporarySourceZip -Destination $SourceZip -Force
+    Copy-Item -LiteralPath (Join-Path $Root "update.json") `
+        -Destination (Join-Path $Out "update.json") -Force
+    Copy-Item -LiteralPath (Join-Path $Root "CHANGELOG.md") `
+        -Destination (Join-Path $Out "CHANGELOG.md") -Force
     Write-Host "Built: $Zip"
     Write-Host "Built: $SourceZip"
 } finally {

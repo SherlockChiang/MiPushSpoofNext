@@ -79,12 +79,18 @@ ensure_state() {
 }
 
 usage() {
-  echo "Usage: mipushctl <scan|list|add|deny|remove|profile|observe|status> [value]"
+  echo "Usage: mipushctl <scan|manage|list|apps|app|app-status|enable|disable|auto|state|profile|observe|status> [value]"
   echo "  scan                  Detect installed APKs containing MiPush SDK markers"
-  echo "  list                  Show manual and auto-generated process rules"
-  echo "  add <package>         Add a manual allow rule"
-  echo "  deny <package[:proc]> Add a manual deny rule"
-  echo "  remove <rule>         Remove allow/deny variants from manual rules"
+  echo "  manage                Scan and manage apps with the volume keys"
+  echo "  list                  Show friendly manual and automatic app states"
+  echo "  apps                  Print tab-separated app states for WebUI clients"
+  echo "  app <pkg> <state>     Set an app to auto, enable, or disable"
+  echo "  app-status <pkg>      Show an app's effective selection state"
+  echo "  enable <rule>         Set one exact manual allow rule"
+  echo "  disable <rule>        Set one exact manual deny rule"
+  echo "  auto <rule>           Clear that exact manual rule"
+  echo "  state <rule>          Print enabled, disabled, auto, or inactive"
+  echo "  add|deny|remove       Legacy aliases for enable|disable|auto"
   echo "  profile [name]        List profiles or activate one"
   echo "  observe <on|off>      Toggle property-key observation"
   echo "  status                Show active settings"
@@ -110,6 +116,21 @@ valid_rule() {
   return 0
 }
 
+valid_package() {
+  valid_rule "$1" || return 1
+  case "$1" in *:*) return 1 ;; esac
+  return 0
+}
+
+protected_package() {
+  case "$1" in
+    android|system_server|com.android.*|com.google.android.gms|\
+    com.xiaomi.xmsf|com.topjohnwu.magisk|me.weishu.kernelsu|com.rifsxd.ksunext|\
+    me.bmax.apatch|org.lsposed.manager|com.tencent.mm|top.trumeet.mipush) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 valid_profile() {
   case "$1" in
     ''|-*|.*|*.|*..*|*[!A-Za-z0-9._-]*) return 1 ;;
@@ -117,15 +138,140 @@ valid_profile() {
   esac
 }
 
-append_unique() {
-  value=$1
-  file=$2
-  grep -Fqx -e "$value" "$file" 2>/dev/null
-  grep_status=$?
-  [ "$grep_status" -eq 0 ] && return 0
-  [ "$grep_status" -eq 1 ] || return 1
-  new_temp "$file" || return 1
-  awk -v value="$value" '{ print } END { print value }' "$file" > "$TEMP" && commit_temp "$file"
+set_rule_state() {
+  rule=$1
+  state=$2
+  replacement=
+  case "$state" in
+    enabled) replacement=$rule ;;
+    disabled) replacement="!$rule" ;;
+    auto) ;;
+    *) return 1 ;;
+  esac
+  new_temp "$MANUAL" || return 1
+  awk -v allow="$rule" -v deny="!$rule" -v replacement="$replacement" '
+    $0 == allow || $0 == deny { next }
+    { print }
+    END { if (replacement != "") print replacement }
+  ' "$MANUAL" > "$TEMP" && commit_temp "$MANUAL"
+}
+
+set_app_state() {
+  package=$1
+  state=$2
+  replacement=
+  case "$state" in
+    enabled) replacement=$package ;;
+    disabled) replacement="!$package" ;;
+    auto) ;;
+    *) return 1 ;;
+  esac
+  new_temp "$MANUAL" || return 1
+  awk -v package="$package" -v replacement="$replacement" '
+    {
+      candidate=$0
+      sub(/^!/, "", candidate)
+      if (candidate == package || index(candidate, package ":") == 1) next
+      print
+    }
+    END { if (replacement != "") print replacement }
+  ' "$MANUAL" > "$TEMP" && commit_temp "$MANUAL"
+}
+
+rule_state() {
+  rule=$1
+  base=${rule%%:*}
+  if grep -Fqx -e "!$rule" "$MANUAL" 2>/dev/null || \
+    { [ "$base" != "$rule" ] && grep -Fqx -e "!$base" "$MANUAL" 2>/dev/null; }; then
+    echo disabled
+  elif grep -Fqx -e "$rule" "$MANUAL" 2>/dev/null || \
+    { [ "$base" != "$rule" ] && grep -Fqx -e "$base" "$MANUAL" 2>/dev/null; }; then
+    echo enabled
+  elif grep -Fqx -e "$rule" "$AUTO" 2>/dev/null || \
+    { [ "$base" != "$rule" ] && grep -Fqx -e "$base" "$AUTO" 2>/dev/null; }; then
+    echo auto
+  else
+    echo inactive
+  fi
+}
+
+app_state() {
+  package=$1
+  if protected_package "$package"; then
+    echo protected
+  elif grep -Fqx -e "!$package" "$MANUAL" 2>/dev/null; then
+    echo disabled
+  elif grep -Fqx -e "$package" "$MANUAL" 2>/dev/null; then
+    echo enabled
+  elif awk -v prefix="$package:" '
+    { candidate=$0; sub(/^!/, "", candidate); if (index(candidate, prefix) == 1) found=1 }
+    END { exit(found ? 0 : 1) }
+  ' "$MANUAL" 2>/dev/null; then
+    echo custom
+  elif grep -Fqx -e "$package" "$AUTO" 2>/dev/null; then
+    echo auto-enabled
+  else
+    echo auto-inactive
+  fi
+}
+
+apply_app_state() {
+  package=$1
+  if /system/bin/am force-stop "$package"; then
+    echo "Force-stopped $package; reopen it to apply the new state."
+  else
+    echo "Rule saved, but force-stop failed for $package." >&2
+    return 1
+  fi
+}
+
+read_volume_key() {
+  seconds=${1:-30}
+  [ -x /system/bin/getevent ] || return 3
+  while :; do
+    event=$("$MPSN_BUSYBOX" timeout "$seconds" /system/bin/getevent -qlc 1 2>/dev/null)
+    event_status=$?
+    [ "$event_status" -eq 124 ] && return 2
+    [ "$event_status" -eq 0 ] || return 3
+    case "$event" in
+      *KEY_VOLUMEUP*DOWN*) echo up; return 0 ;;
+      *KEY_VOLUMEDOWN*DOWN*) echo down; return 0 ;;
+    esac
+  done
+}
+
+print_rules() {
+  echo "Manual overrides:"
+  manual_count=0
+  while IFS= read -r rule; do
+    case "$rule" in
+      ''|\#*) continue ;;
+      !*) echo "  DISABLED  ${rule#!}" ;;
+      *) echo "  ENABLED   $rule" ;;
+    esac
+    manual_count=$((manual_count + 1))
+  done < "$MANUAL"
+  [ "$manual_count" -ne 0 ] || echo "  (none)"
+  echo "Automatic scan candidates (manual DISABLED rules win):"
+  auto_count=0
+  while IFS= read -r rule; do
+    case "$rule" in ''|\#*) continue ;; esac
+    echo "  AUTO      $rule"
+    auto_count=$((auto_count + 1))
+  done < "$AUTO"
+  [ "$auto_count" -ne 0 ] || echo "  (none; run mipushctl scan)"
+}
+
+print_app_rows() {
+  packages=$(
+    {
+      grep -v -E '^[[:space:]]*(#|$)' "$MANUAL" 2>/dev/null
+      grep -v -E '^[[:space:]]*(#|$)' "$AUTO" 2>/dev/null
+    } | sed -e 's/^!//' -e 's/:.*//' | awk '!seen[$0]++'
+  )
+  for package in $packages; do
+    printf '%s\t%s\n' "$(app_state "$package")" "$package"
+  done
 }
 
 set_option() {
@@ -161,27 +307,126 @@ case "${1:-}" in
     exec "$MPSN_BUSYBOX" sh "$MODDIR/bin/scan_packages.sh"
     ;;
   list)
-    echo "Manual rules ($MANUAL):"
-    grep -v -E '^[[:space:]]*(#|$)' "$MANUAL" 2>/dev/null | sed 's/^/  /'
-    echo "Auto-detected ($AUTO):"
-    grep -v -E '^[[:space:]]*(#|$)' "$AUTO" 2>/dev/null | sed 's/^/  /'
+    print_rules
     ;;
-  add|deny)
+  apps)
+    print_app_rows
+    ;;
+  enable|add|disable|deny|auto|remove)
     rule=${2:-}
     valid_rule "$rule" || { echo "Invalid package/process rule: $rule" >&2; exit 2; }
-    [ "$1" = "deny" ] && rule="!$rule"
-    append_unique "$rule" "$MANUAL" || die "Failed to update $MANUAL."
-    echo "Added: $rule"
+    case "$1" in
+      enable|add) state=enabled ;;
+      disable|deny) state=disabled ;;
+      auto|remove) state=auto ;;
+    esac
+    set_rule_state "$rule" "$state" || die "Failed to update $MANUAL."
+    echo "$rule: $(rule_state "$rule")"
+    echo "Restart ${rule%%:*} to apply the change."
     ;;
-  remove)
+  state)
     rule=${2:-}
     valid_rule "$rule" || { echo "Invalid package/process rule: $rule" >&2; exit 2; }
-    new_temp "$MANUAL" || die "Failed to create a temporary rule file."
-    if ! awk -v allow="$rule" -v deny="!$rule" '$0 != allow && $0 != deny { print }' \
-      "$MANUAL" > "$TEMP" || ! commit_temp "$MANUAL"; then
-      die "Failed to update $MANUAL."
+    rule_state "$rule"
+    ;;
+  app-status)
+    package=${2:-}
+    valid_package "$package" || { echo "Invalid package name: $package" >&2; exit 2; }
+    app_state "$package"
+    ;;
+  app)
+    package=${2:-}
+    requested=${3:-}
+    valid_package "$package" || { echo "Invalid package name: $package" >&2; exit 2; }
+    protected_package "$package" && {
+      echo "$package is protected and cannot be enabled or managed." >&2
+      exit 2
+    }
+    case "$requested" in
+      auto) new_state=auto ;;
+      enable|enabled) new_state=enabled ;;
+      disable|disabled) new_state=disabled ;;
+      *) echo "app expects: <package> <auto|enable|disable> [--apply]" >&2; exit 2 ;;
+    esac
+    case "${4:-}" in ''|--apply) ;; *) echo "Unknown app option: $4" >&2; exit 2 ;; esac
+    set_app_state "$package" "$new_state" || die "Failed to update $MANUAL."
+    echo "$package: $(app_state "$package")"
+    if [ "${4:-}" = --apply ]; then
+      apply_app_state "$package" || exit 1
+    else
+      echo "Restart $package to apply the change (or add --apply next time)."
     fi
-    echo "Removed allow/deny variants: $rule"
+    ;;
+  manage)
+    echo "Scanning installed apps for MiPush support..."
+    "$MPSN_BUSYBOX" sh "$MODDIR/bin/scan_packages.sh" || exit $?
+    echo
+    print_rules
+    echo
+    echo "Press VOLUME UP within 15 seconds to open app controls."
+    echo "Press VOLUME DOWN (or wait) to finish after scanning."
+    key=$(read_volume_key 15)
+    key_status=$?
+    [ "$key_status" -eq 0 ] || {
+      echo "Interactive keys unavailable or timed out; scan results were saved."
+      exit 0
+    }
+    [ "$key" = up ] || exit 0
+    packages=$(
+      {
+        grep -v -E '^[[:space:]]*(#|$)' "$MANUAL" 2>/dev/null
+        grep -v -E '^[[:space:]]*(#|$)' "$AUTO" 2>/dev/null
+      } | sed -e 's/^!//' -e 's/:.*//' | awk '!seen[$0]++'
+    )
+    [ -n "$packages" ] || {
+      echo "No candidate apps found. Add one with: mipushctl enable <package>"
+      exit 0
+    }
+    echo
+    echo "For each app: VOLUME DOWN changes the state; VOLUME UP confirms it."
+    echo "States cycle: AUTO -> DISABLED -> ENABLED -> AUTO."
+    for package in $packages; do
+      if protected_package "$package"; then
+        echo
+        echo "$package [protected; skipped]"
+        continue
+      fi
+      changed=0
+      while :; do
+        state=$(app_state "$package")
+        echo
+        echo "$package [$state]"
+        key=$(read_volume_key 30)
+        key_status=$?
+        [ "$key_status" -eq 0 ] || {
+          echo "Timed out; saved all changes made so far."
+          exit 0
+        }
+        [ "$key" = up ] && break
+        case "$state" in
+          auto-enabled|auto-inactive) next_state=disabled ;;
+          disabled) next_state=enabled ;;
+          enabled|custom) next_state=auto ;;
+          *) next_state=auto ;;
+        esac
+        set_app_state "$package" "$next_state" || die "Failed to update $MANUAL."
+        changed=1
+        echo "Changed to: $next_state"
+      done
+      if [ "$changed" -eq 1 ]; then
+        echo "Press VOLUME UP to apply now by force-stopping $package."
+        echo "Press VOLUME DOWN to restart it yourself later."
+        key=$(read_volume_key 30)
+        key_status=$?
+        [ "$key_status" -eq 0 ] || {
+          echo "Timed out; rule saved without force-stopping the app."
+          continue
+        }
+        [ "$key" = up ] && apply_app_state "$package"
+      fi
+    done
+    echo
+    echo "Done. Force-stop and reopen changed apps to apply their new state."
     ;;
   profile)
     if [ -z "${2:-}" ]; then

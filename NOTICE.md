@@ -23,3 +23,9 @@ were treated as factual requirements. See `docs/UPSTREAM_AUDIT.md`.
 The Magisk recovery installer shim in
 `module/META-INF/com/google/android/update-binary` follows the standard Magisk module
 installer interface. This project as a whole is distributed under GPL-3.0-or-later.
+
+## KernelSU WebUI bridge
+
+`module/webroot/index.html` uses the documented `window.ksu.exec` WebUI bridge and does not
+bundle the KernelSU npm package or copy its implementation. The page is optional: managers
+without a compatible WebUI continue to use the Action script and CLI.

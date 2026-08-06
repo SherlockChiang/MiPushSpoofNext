@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1 - 2026-08-06
+
+- Action 按钮新增音量键应用管理：自动、始终启用、始终禁用三态，并可选择立即强停应用使设置生效。
+- KernelSU/APatch 模块 WebUI 新增图形化扫描、筛选、手动添加和三态开关。
+- 新增事务化 `app` / `app-status` 命令；整包切换会清理冲突的包级与子进程手工规则。
+- `enable` / `disable` / `auto` 成为清晰的精确规则命令，保留 `add` / `deny` / `remove` 兼容别名。
+- `list` 改为带状态标签的可读输出，内置保护包会拒绝通过整包入口修改。
+- 增加标准 `updateJson`，从 GitHub Release 获取版本 ZIP 与更新说明。
+- 推送版本标签时，GitHub Actions 自动创建或更新 Release 并上传已验证的安装包/源码包。
+
 ## 0.1.0 - 2026-08-05
 
 - 首个纯 Zygisk MVP。

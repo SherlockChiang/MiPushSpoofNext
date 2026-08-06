@@ -1,6 +1,7 @@
 id=mipush-spoof-next
 name=MiPush Spoof Next
-version=v0.1.0
-versionCode=100
+version=v0.1.1
+versionCode=101
 author=SherlockChiang
 description=Per-process Xiaomi/MIUI spoofing for MiPushFramework on AOSP ROMs (Zygisk).
+updateJson=https://github.com/SherlockChiang/MiPushSpoofNext/releases/latest/download/update.json

@@ -25,5 +25,46 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: MiPushSpoofNext
-          path: out/MiPushSpoofNext-v*.zip
+          path: |
+            out/MiPushSpoofNext-v*.zip
+            out/update.json
+            out/CHANGELOG.md
           if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MiPushSpoofNext
+          path: dist
+      - name: Verify tagged release assets
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          test -f "dist/MiPushSpoofNext-${TAG}.zip"
+          test -f "dist/MiPushSpoofNext-${TAG}-source.zip"
+          test -f "dist/update.json"
+          test -f "dist/CHANGELOG.md"
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          assets=(
+            "dist/MiPushSpoofNext-${TAG}.zip"
+            "dist/MiPushSpoofNext-${TAG}-source.zip"
+            "dist/update.json"
+            "dist/CHANGELOG.md"
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$TAG" "${assets[@]}" \
+              --verify-tag --title "MiPush Spoof Next $TAG" --generate-notes
+          fi

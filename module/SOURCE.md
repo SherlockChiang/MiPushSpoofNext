@@ -1,7 +1,7 @@
 # Corresponding source
 
 This binary module is distributed together with
-`MiPushSpoofNext-v0.1.0-source.zip`, which contains the complete corresponding
+`MiPushSpoofNext-v0.1.1-source.zip`, which contains the complete corresponding
 source code and build scripts for this release.
 
 The native libraries are built from `native/jni/module.cpp` with Android NDK

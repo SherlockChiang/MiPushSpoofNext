@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import pathlib
 import re
 import sys
@@ -68,6 +69,37 @@ def main():
         raise AssertionError("module.prop: invalid or missing version")
     if not re.search(r"^versionCode=\d+$", module_prop, re.MULTILINE):
         raise AssertionError("module.prop: invalid or missing versionCode")
+    version_code = int(re.search(r"^versionCode=(\d+)$", module_prop, re.MULTILINE).group(1))
+    update_url = (
+        "https://github.com/SherlockChiang/MiPushSpoofNext/releases/latest/download/update.json"
+    )
+    if not re.search(rf"^updateJson={re.escape(update_url)}$", module_prop, re.MULTILINE):
+        raise AssertionError("module.prop: missing canonical updateJson URL")
+    update = json.loads((ROOT / "update.json").read_text(encoding="utf-8"))
+    if set(update) != {"version", "versionCode", "zipUrl", "changelog"}:
+        raise AssertionError("update.json: unexpected schema")
+    if update["version"] != version_match.group(1) or update["versionCode"] != version_code:
+        raise AssertionError("update.json: version metadata disagrees with module.prop")
+    expected_zip = (
+        "https://github.com/SherlockChiang/MiPushSpoofNext/releases/download/"
+        f"{version_match.group(1)}/MiPushSpoofNext-{version_match.group(1)}.zip"
+    )
+    if update["zipUrl"] != expected_zip:
+        raise AssertionError("update.json: zipUrl does not match the versioned GitHub release asset")
+    expected_changelog = (
+        "https://github.com/SherlockChiang/MiPushSpoofNext/releases/download/"
+        f"{version_match.group(1)}/CHANGELOG.md"
+    )
+    if update["changelog"] != expected_changelog:
+        raise AssertionError("update.json: unexpected changelog URL")
+
+    webui = ROOT / "module/webroot/index.html"
+    if not webui.is_file():
+        raise AssertionError("module/webroot/index.html is required for the graphical manager UI")
+    webui_text = webui.read_text(encoding="utf-8")
+    for marker in ('import("kernelsu")', 'CONTROL+" apps"', 'CONTROL+" app "'):
+        if marker not in webui_text:
+            raise AssertionError(f"WebUI is missing required integration marker: {marker}")
 
     for name in ("LICENSE", "NOTICE.md"):
         if (ROOT / name).read_bytes() != (ROOT / "module" / name).read_bytes():

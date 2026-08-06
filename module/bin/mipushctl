@@ -1,0 +1,224 @@
+#!/system/bin/sh
+
+# Re-enter through the root manager's BusyBox so Android 8 devices have the
+# same awk/grep/sed/unzip implementation as modern devices.
+if [ "${MPSN_ASH_STANDALONE:-0}" != "1" ]; then
+  BUSYBOX_PATH=
+  for candidate in "${MPSN_BUSYBOX:-}" \
+    /data/adb/magisk/busybox /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      BUSYBOX_PATH=$candidate
+      break
+    fi
+  done
+  if [ -z "$BUSYBOX_PATH" ] && command -v busybox >/dev/null 2>&1; then
+    BUSYBOX_PATH=$(command -v busybox)
+  fi
+  if [ -z "$BUSYBOX_PATH" ]; then
+    echo "A Magisk/KernelSU/APatch BusyBox executable is required." >&2
+    exit 1
+  fi
+  export ASH_STANDALONE=1 MPSN_ASH_STANDALONE=1 MPSN_BUSYBOX="$BUSYBOX_PATH"
+  exec "$BUSYBOX_PATH" sh "$0" "$@"
+fi
+
+MODDIR=${0%/*}
+MODDIR=${MODDIR%/bin}
+STATE=/data/adb/mipush-spoof-next
+MANUAL="$STATE/packages.txt"
+AUTO="$STATE/packages.auto.txt"
+OPTIONS="$STATE/options.conf"
+TEMP=
+umask 077
+
+cleanup() {
+  [ -z "$TEMP" ] || rm -f "$TEMP"
+}
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT TERM
+
+die() {
+  echo "$*" >&2
+  exit 1
+}
+
+new_temp() {
+  TEMP="$1.tmp.$$"
+  rm -f "$TEMP" || return 1
+}
+
+commit_temp() {
+  target=$1
+  chmod 0600 "$TEMP" && mv -f "$TEMP" "$target" || return 1
+  TEMP=
+}
+
+atomic_copy() {
+  source_file=$1
+  target_file=$2
+  new_temp "$target_file" && cp -f "$source_file" "$TEMP" && commit_temp "$target_file"
+}
+
+ensure_state() {
+  mkdir -p "$STATE/profiles" "$STATE/logs" || return 1
+  chmod 0700 "$STATE" "$STATE/profiles" "$STATE/logs" || return 1
+  for profile in "$MODDIR"/defaults/profiles/*.properties; do
+    [ -f "$profile" ] || continue
+    target="$STATE/profiles/${profile##*/}"
+    [ -f "$target" ] || atomic_copy "$profile" "$target" || return 1
+  done
+  [ -f "$OPTIONS" ] || atomic_copy "$MODDIR/defaults/options.conf" "$OPTIONS" || return 1
+  [ -f "$MANUAL" ] || atomic_copy "$MODDIR/defaults/packages.txt" "$MANUAL" || return 1
+  if [ ! -f "$AUTO" ]; then
+    new_temp "$AUTO" && : > "$TEMP" && commit_temp "$AUTO" || return 1
+  fi
+  [ -f "$STATE/profile.properties" ] || \
+    atomic_copy "$MODDIR/defaults/profiles/miui14.properties" "$STATE/profile.properties" || return 1
+  chmod 0600 "$OPTIONS" "$MANUAL" "$AUTO" "$STATE/profile.properties" \
+    "$STATE/profiles"/*.properties || return 1
+}
+
+usage() {
+  echo "Usage: mipushctl <scan|list|add|deny|remove|profile|observe|status> [value]"
+  echo "  scan                  Detect installed APKs containing MiPush SDK markers"
+  echo "  list                  Show manual and auto-generated process rules"
+  echo "  add <package>         Add a manual allow rule"
+  echo "  deny <package[:proc]> Add a manual deny rule"
+  echo "  remove <rule>         Remove allow/deny variants from manual rules"
+  echo "  profile [name]        List profiles or activate one"
+  echo "  observe <on|off>      Toggle property-key observation"
+  echo "  status                Show active settings"
+}
+
+valid_rule() {
+  value=$1
+  case "$value" in
+    ''|-*|.*|*.|*..*|*[!A-Za-z0-9._:-]*) return 1 ;;
+  esac
+  base=${value%%:*}
+  case "$base" in
+    ''|*[!A-Za-z0-9._]*|*..*|.*|*.) return 1 ;;
+    *.*) ;;
+    *) return 1 ;;
+  esac
+  case "$value" in
+    *:*)
+      suffix=${value#*:}
+      case "$suffix" in ''|*:*) return 1 ;; esac
+      ;;
+  esac
+  return 0
+}
+
+valid_profile() {
+  case "$1" in
+    ''|-*|.*|*.|*..*|*[!A-Za-z0-9._-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+append_unique() {
+  value=$1
+  file=$2
+  grep -Fqx -e "$value" "$file" 2>/dev/null
+  grep_status=$?
+  [ "$grep_status" -eq 0 ] && return 0
+  [ "$grep_status" -eq 1 ] || return 1
+  new_temp "$file" || return 1
+  awk -v value="$value" '{ print } END { print value }' "$file" > "$TEMP" && commit_temp "$file"
+}
+
+set_option() {
+  key=$1
+  value=$2
+  new_temp "$OPTIONS" || return 1
+  awk -F= -v key="$key" -v value="$value" '
+    BEGIN { found=0 }
+    $1 == key { print key "=" value; found=1; next }
+    { print }
+    END { if (!found) print key "=" value }
+  ' "$OPTIONS" > "$TEMP" && commit_temp "$OPTIONS"
+}
+
+ensure_option_defaults() {
+  for pair in \
+    'scan_system_apps=false' \
+    'scan_deep=false' \
+    'scan_max_apk_bytes=157286400'; do
+    key=${pair%%=*}
+    value=${pair#*=}
+    if ! grep -q "^$key=" "$OPTIONS" 2>/dev/null; then
+      set_option "$key" "$value" || return 1
+    fi
+  done
+}
+
+ensure_state || die "Unable to initialize secure state at $STATE."
+ensure_option_defaults || die "Unable to migrate configuration defaults."
+
+case "${1:-}" in
+  scan)
+    exec "$MPSN_BUSYBOX" sh "$MODDIR/bin/scan_packages.sh"
+    ;;
+  list)
+    echo "Manual rules ($MANUAL):"
+    grep -v -E '^[[:space:]]*(#|$)' "$MANUAL" 2>/dev/null | sed 's/^/  /'
+    echo "Auto-detected ($AUTO):"
+    grep -v -E '^[[:space:]]*(#|$)' "$AUTO" 2>/dev/null | sed 's/^/  /'
+    ;;
+  add|deny)
+    rule=${2:-}
+    valid_rule "$rule" || { echo "Invalid package/process rule: $rule" >&2; exit 2; }
+    [ "$1" = "deny" ] && rule="!$rule"
+    append_unique "$rule" "$MANUAL" || die "Failed to update $MANUAL."
+    echo "Added: $rule"
+    ;;
+  remove)
+    rule=${2:-}
+    valid_rule "$rule" || { echo "Invalid package/process rule: $rule" >&2; exit 2; }
+    new_temp "$MANUAL" || die "Failed to create a temporary rule file."
+    if ! awk -v allow="$rule" -v deny="!$rule" '$0 != allow && $0 != deny { print }' \
+      "$MANUAL" > "$TEMP" || ! commit_temp "$MANUAL"; then
+      die "Failed to update $MANUAL."
+    fi
+    echo "Removed allow/deny variants: $rule"
+    ;;
+  profile)
+    if [ -z "${2:-}" ]; then
+      echo "Available profiles:"
+      for file in "$STATE"/profiles/*.properties; do
+        [ -f "$file" ] || continue
+        name=${file##*/}
+        echo "  ${name%.properties}"
+      done
+    else
+      name=$2
+      valid_profile "$name" || { echo "Invalid profile name: $name" >&2; exit 2; }
+      source_file="$STATE/profiles/$name.properties"
+      [ -f "$source_file" ] || { echo "Unknown profile: $name" >&2; exit 2; }
+      atomic_copy "$source_file" "$STATE/profile.properties" || die "Failed to activate profile."
+      echo "Activated profile: $name"
+    fi
+    ;;
+  observe)
+    case "${2:-}" in
+      on) set_option observe_properties true || die "Failed to update observation setting." ;;
+      off) set_option observe_properties false || die "Failed to update observation setting." ;;
+      *) echo "observe expects on or off" >&2; exit 2 ;;
+    esac
+    echo "Property observation: $2 (restart target apps)"
+    ;;
+  status)
+    echo "State directory: $STATE"
+    echo "Options:"
+    sed 's/^/  /' "$OPTIONS"
+    echo "Active profile identity:"
+    grep -E '^(prop\.ro\.(miui\.ui|mi\.os)\.version|build\.(BRAND|MANUFACTURER))' \
+      "$STATE/profile.properties" 2>/dev/null | sed 's/^/  /'
+    "$MPSN_BUSYBOX" sh "$0" list
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac

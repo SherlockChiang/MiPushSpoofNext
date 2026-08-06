@@ -1,0 +1,10 @@
+# One package per line. A package rule also covers its colon subprocesses.
+# Example:
+# com.example.app
+#
+# Match exactly one subprocess by including the process suffix:
+# com.example.app:push
+#
+# A leading ! is an explicit deny and wins over packages.auto.txt:
+# !com.example.app:camera
+

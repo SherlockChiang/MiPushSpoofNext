@@ -1,0 +1,9 @@
+/.idea/
+/.vscode/
+/build/
+/native/libs/
+/native/obj/
+/out/
+__pycache__/
+*.py[cod]
+*.iml

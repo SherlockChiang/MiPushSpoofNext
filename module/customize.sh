@@ -49,9 +49,14 @@ fi
 if [ ! -f "$STATE/packages.auto.txt" ]; then
   : > "$STATE/packages.auto.txt" || abort "Cannot initialize automatic package rules."
 fi
+if [ ! -f "$STATE/package_modes.conf" ]; then
+  cp -f "$MODPATH/defaults/package_modes.conf" "$STATE/package_modes.conf" || \
+    abort "Cannot initialize package capability modes."
+fi
 
 chmod 0600 "$STATE/options.conf" "$STATE/profile.properties" \
-  "$STATE/packages.txt" "$STATE/packages.auto.txt" "$STATE/profiles"/*.properties || \
+  "$STATE/packages.txt" "$STATE/packages.auto.txt" "$STATE/package_modes.conf" \
+  "$STATE/profiles"/*.properties || \
   abort "Cannot secure configuration files."
 chown -R 0:0 "$STATE" || abort "Cannot set configuration ownership."
 

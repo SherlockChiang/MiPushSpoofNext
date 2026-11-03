@@ -41,7 +41,7 @@
 
 ## 安装
 
-1. 在 root 管理器中安装 `MiPushSpoofNext-v0.1.1.zip`。
+1. 在 root 管理器中安装 `MiPushSpoofNext-v0.1.2.zip`。
 2. 确保 Zygisk provider 已启用，然后重启。
 3. 在 KernelSU/APatch 管理器中打开模块的 WebUI，即可图形化扫描和管理应用；Magisk
    管理器没有通用 WebUI 入口时，点击模块的“操作/Action”按钮作为兼容入口。Action 会先
@@ -103,6 +103,7 @@ Release 附件尚未就绪时误报更新。该格式与 Magisk 官方模块更�
 
 - `packages.txt`：手工规则，升级保留。
 - `packages.auto.txt`：扫描器生成，每次扫描原子替换。
+- `package_modes.conf`：可选的包级能力模式，升级保留。
 - `options.conf`：功能和日志开关。
 - `profile.properties`：当前 profile 快照。
 - `profiles/`：可切换的 profile 模板。
@@ -116,6 +117,26 @@ Release 附件尚未就绪时误报更新。该格式与 Magisk 官方模块更�
 微信/旧 MiPush Manager，以及常见 root/模块管理器
 有不可关闭的保护性 deny；Zygisk 虽会调用 server specialization 回调，但模块不会在
 `system_server` 安装 hook 或保留自身 so。
+
+### 包级能力模式
+
+规则文件决定“是否选中”，`package_modes.conf` 决定“选中后给什么”，且不会单独选中任何包：
+
+```sh
+# 只写 Build 字段（不装 JNI hook，模块在进程启动后卸载）
+su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl mode com.example.app build --apply'
+# 其余模式：inherit（默认，跟随 options.conf）、full、properties、observe、excluded
+su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl mode com.example.app'
+```
+
+包级模式同样覆盖冒号子进程，`包名:进程` 条目可单独覆盖；`excluded` 优先于其他模式，未知模式值
+按排除处理。每个进程启动时 companion 会输出一行最终策略，例如
+`policy package=... mode=excluded reason=explicit_deny source=manual`，可直接判断该进程是否被注入。
+
+使用 360 加固、腾讯乐固等商用壳的应用可能因反篡改初始化在注入后被直接杀死（无 Java 崩溃栈）。
+扫描器会在输出和 `logs/scan.log` 中标注 `hardening=jiagu` 等，仅作提示。遇到启动闪退时先试
+`mipushctl mode <包名> build --apply`（不装 JNI hook）；仍闪退再
+`mipushctl app <包名> disable --apply` 止血，并按 [测试清单](docs/TESTING.md) 的 A/B 步骤定位。
 
 ## Profile 与观察模式
 
@@ -149,6 +170,11 @@ boolean/handle hooks、MIUI 属性和 Build profile 均生效；XMSF 观察到
 FATAL EXCEPTION、ANR 或模块错误。该结果是单机冒烟，不代表所有 ROM、Zygisk provider 或
 MiPush SDK 版本均兼容；请按 [测试清单](docs/TESTING.md) 补做自己的矩阵验证。
 
+已知问题：同一设备升级到 Android 17/API 37 后，起点读书 7.9.482（360 加固）只要装了
+`SystemProperties` hook（包括只观察不改值的 `observe`）就会在启动时被 `signal 9` 杀死。
+`mipushctl mode com.qidian.QDReader build` 只写 Build 字段、不装 hook，起点读书可正常启动并
+连接 XMSF。A/B 记录见测试清单。
+
 卸载脚本会同时删除 `/data/adb/mipush-spoof-next` 中的规则、profile 快照和日志；如需保留配置，
 请在卸载前自行导出该目录。
 
@@ -172,7 +198,7 @@ MiPush SDK 版本均兼容；请按 [测试清单](docs/TESTING.md) 补做自己
 - 不伪装 PackageManager、Telephony、Settings、设备标识符或 Play Integrity。若未来实测新
   MiPush SDK 确实依赖这些面，建议作为独立、可选 LSPosed adapter，而不是扩大默认 Zygisk
   攻击面。
-- 目前只有上述 XQ-CQ72 的单机冒烟，尚未形成跨 ROM/页大小/SDK 的兼容矩阵。`v0.1.1` 仍是
+- 目前只有上述 XQ-CQ72 的单机冒烟，尚未形成跨 ROM/页大小/SDK 的兼容矩阵。`v0.1.2` 仍是
   实验性工程基线；报告实机结果时应附 Android 版本、root/Zygisk provider、目标包、XMSF
   版本及 `MiPushSpoofNext` 日志。
 

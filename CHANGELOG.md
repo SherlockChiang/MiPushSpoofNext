@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.2 - 2026-11-04
+
+- 新增 `package_modes.conf` 包级能力模式：`inherit`、`full`、`properties`、`build`、`observe`、
+  `excluded`，以及 `mipushctl mode <规则> [模式] [--apply]`。模式只决定选中后的能力，不会单独
+  选中包；`excluded` 与未知模式值都会排除进程。
+- companion 为每个进程输出最终策略日志（`policy ... mode= reason= source=`），区分内置 deny、
+  显式 deny、无 allow、模式排除、手工 allow 与自动 allow。
+- `SystemProperties` 改为逐签名挂钩，清理 provider 遗留的 JNI 异常，记录每个签名的结果，并防止
+  原函数未知时自递归；每进程只安装一次。
+- 没有任何 JNI hook 生效（例如 `build` 模式）时在 specialize 后卸载模块库。
+- Build 日志增加 applied/missing/failed 计数。
+- 扫描器记录发现原因、人工规则与模式下的最终动作，并在 `scan.log` 和输出中标注 360 加固、
+  乐固、梆梆、爱加密、百度加固等商用壳（仅提示，不改变策略）。
+- 记录 Android 17 上起点读书（360 加固）注入后被杀的问题与 A/B 结果：任何 `SystemProperties`
+  hook 都会触发加固杀进程，`build` 模式可正常启动并连接 XMSF；扫描提示优先建议 `build`。
+
 ## 0.1.1 - 2026-08-06
 
 - Action 按钮新增音量键应用管理：自动、始终启用、始终禁用三态，并可选择立即强停应用使设置生效。

@@ -27,6 +27,7 @@ MODDIR=${MODDIR%/bin}
 STATE=/data/adb/mipush-spoof-next
 MANUAL="$STATE/packages.txt"
 AUTO="$STATE/packages.auto.txt"
+MODES="$STATE/package_modes.conf"
 OPTIONS="$STATE/options.conf"
 TEMP=
 umask 077
@@ -69,23 +70,26 @@ ensure_state() {
   done
   [ -f "$OPTIONS" ] || atomic_copy "$MODDIR/defaults/options.conf" "$OPTIONS" || return 1
   [ -f "$MANUAL" ] || atomic_copy "$MODDIR/defaults/packages.txt" "$MANUAL" || return 1
+  [ -f "$MODES" ] || atomic_copy "$MODDIR/defaults/package_modes.conf" "$MODES" || return 1
   if [ ! -f "$AUTO" ]; then
     new_temp "$AUTO" && : > "$TEMP" && commit_temp "$AUTO" || return 1
   fi
   [ -f "$STATE/profile.properties" ] || \
     atomic_copy "$MODDIR/defaults/profiles/miui14.properties" "$STATE/profile.properties" || return 1
-  chmod 0600 "$OPTIONS" "$MANUAL" "$AUTO" "$STATE/profile.properties" \
+  chmod 0600 "$OPTIONS" "$MANUAL" "$AUTO" "$MODES" "$STATE/profile.properties" \
     "$STATE/profiles"/*.properties || return 1
 }
 
 usage() {
-  echo "Usage: mipushctl <scan|manage|list|apps|app|app-status|enable|disable|auto|state|profile|observe|status> [value]"
+  echo "Usage: mipushctl <scan|manage|list|apps|app|app-status|mode|enable|disable|auto|state|profile|observe|status> [value]"
   echo "  scan                  Detect installed APKs containing MiPush SDK markers"
   echo "  manage                Scan and manage apps with the volume keys"
   echo "  list                  Show friendly manual and automatic app states"
   echo "  apps                  Print tab-separated app states for WebUI clients"
   echo "  app <pkg> <state>     Set an app to auto, enable, or disable"
   echo "  app-status <pkg>      Show an app's effective selection state"
+  echo "  mode <rule> [mode]    Show or set what a selected app receives:"
+  echo "                        inherit, full, properties, build, observe, excluded"
   echo "  enable <rule>         Set one exact manual allow rule"
   echo "  disable <rule>        Set one exact manual deny rule"
   echo "  auto <rule>           Clear that exact manual rule"
@@ -129,6 +133,54 @@ protected_package() {
     me.bmax.apatch|org.lsposed.manager|com.tencent.mm|top.trumeet.mipush) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+valid_mode() {
+  case "$1" in
+    inherit|full|properties|build|observe|excluded) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Print the mode configured for exactly this rule (the last matching line wins,
+# as in the native parser), or inherit when there is none.
+mode_of() {
+  awk -v rule="$1" '
+    {
+      line=$0
+      sub(/#.*/, "", line)
+      separator=index(line, "=")
+      if (separator == 0) next
+      key=substr(line, 1, separator - 1)
+      value=substr(line, separator + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      if (key == rule) mode=tolower(value)
+    }
+    END { print (mode == "" ? "inherit" : mode) }
+  ' "$MODES" 2>/dev/null
+}
+
+set_mode() {
+  rule=$1
+  mode=$2
+  replacement=
+  [ "$mode" = inherit ] || replacement="$rule=$mode"
+  new_temp "$MODES" || return 1
+  awk -v rule="$rule" -v replacement="$replacement" '
+    {
+      line=$0
+      sub(/#.*/, "", line)
+      separator=index(line, "=")
+      if (separator > 0) {
+        key=substr(line, 1, separator - 1)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+        if (key == rule) next
+      }
+      print
+    }
+    END { if (replacement != "") print replacement }
+  ' "$MODES" > "$TEMP" && commit_temp "$MODES"
 }
 
 valid_profile() {
@@ -256,10 +308,39 @@ print_rules() {
   auto_count=0
   while IFS= read -r rule; do
     case "$rule" in ''|\#*) continue ;; esac
-    echo "  AUTO      $rule"
+    # The scanner records detected app hardening (Jiagu, Legu, ...) in scan.log.
+    hardening=$(awk -v candidate="candidate=$rule" '
+      $1 == candidate {
+        for (i = 2; i <= NF; i++) if ($i ~ /^hardening=/) { sub(/^hardening=/, "", $i); print $i }
+        exit
+      }
+    ' "$STATE/logs/scan.log" 2>/dev/null)
+    case "$hardening" in
+      ''|none) echo "  AUTO      $rule" ;;
+      *) echo "  AUTO      $rule [hardening: $hardening]" ;;
+    esac
     auto_count=$((auto_count + 1))
   done < "$AUTO"
   [ "$auto_count" -ne 0 ] || echo "  (none; run mipushctl scan)"
+  echo "Capability modes (package_modes.conf; unlisted apps inherit options.conf):"
+  mode_count=0
+  while IFS= read -r line; do
+    line=${line%%#*}
+    case "$line" in *=*) ;; *) continue ;; esac
+    rule=$(echo "${line%%=*}" | tr -d '[:space:]')
+    mode=$(echo "${line#*=}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [ -n "$rule" ] || continue
+    if valid_mode "$mode"; then
+      label=$(echo "$mode" | tr '[:lower:]' '[:upper:]')
+      note=
+    else
+      label=INVALID
+      note=" ('$mode' is unknown, so the process is excluded)"
+    fi
+    printf '  %-9s %s%s\n' "$label" "$rule" "$note"
+    mode_count=$((mode_count + 1))
+  done < "$MODES"
+  [ "$mode_count" -ne 0 ] || echo "  (none)"
 }
 
 print_app_rows() {
@@ -355,6 +436,31 @@ case "${1:-}" in
       apply_app_state "$package" || exit 1
     else
       echo "Restart $package to apply the change (or add --apply next time)."
+    fi
+    ;;
+  mode)
+    rule=${2:-}
+    valid_rule "$rule" || { echo "Invalid package/process rule: $rule" >&2; exit 2; }
+    protected_package "${rule%%:*}" && {
+      echo "${rule%%:*} is protected and is never injected." >&2
+      exit 2
+    }
+    if [ -z "${3:-}" ]; then
+      echo "$rule: $(mode_of "$rule")"
+      exit 0
+    fi
+    requested=$3
+    valid_mode "$requested" || {
+      echo "mode expects: <rule> <inherit|full|properties|build|observe|excluded> [--apply]" >&2
+      exit 2
+    }
+    case "${4:-}" in ''|--apply) ;; *) echo "Unknown mode option: $4" >&2; exit 2 ;; esac
+    set_mode "$rule" "$requested" || die "Failed to update $MODES."
+    echo "$rule: $(mode_of "$rule")"
+    if [ "${4:-}" = --apply ]; then
+      apply_app_state "${rule%%:*}" || exit 1
+    else
+      echo "Restart ${rule%%:*} to apply the change (or add --apply next time)."
     fi
     ;;
   manage)

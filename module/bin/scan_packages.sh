@@ -156,7 +156,7 @@ while IFS= read -r line; do
       "$TMP/package-dump"
     component_status=$?
     if [ "$component_status" -eq 0 ]; then
-      echo "$package" >> "$TMP/found"
+      echo "$package component_marker" >> "$TMP/found"
       continue
     fi
     if [ "$component_status" -gt 1 ]; then
@@ -178,6 +178,7 @@ while IFS= read -r line; do
   fi
 
   found=0
+  found_reason=
   package_failed=0
   while IFS= read -r apk_line; do
     case "$apk_line" in package:*) apk=${apk_line#package:} ;; *) continue ;; esac
@@ -216,6 +217,7 @@ while IFS= read -r line; do
         fast_status=$?
         if [ "$fast_status" -eq 0 ]; then
           found=1
+          found_reason=dexlist_marker
           break
         fi
         if [ "$fast_status" -gt 1 ]; then
@@ -265,6 +267,7 @@ while IFS= read -r line; do
       grep_status=$?
       if [ "$grep_status" -eq 0 ]; then
         found=1
+        found_reason=dex_marker
         break
       fi
       if [ "$grep_status" -gt 1 ]; then
@@ -279,12 +282,13 @@ while IFS= read -r line; do
   if [ "$package_failed" -ne 0 ]; then
     scan_failed=1
   elif [ "$found" -ne 0 ]; then
-    echo "$package" >> "$TMP/found"
+    echo "$package $found_reason" >> "$TMP/found"
   fi
 done < "$TMP/packages"
 
 [ "$scan_failed" -eq 0 ] || fail_scan "one or more APKs could not be scanned"
-sort -u "$TMP/found" > "$TMP/result" || fail_scan "cannot sort scan result"
+awk '{ print $1 }' "$TMP/found" > "$TMP/found-packages" || fail_scan "cannot read scan result"
+sort -u "$TMP/found-packages" > "$TMP/result" || fail_scan "cannot sort scan result"
 # Create the replacement inode inside the protected state directory. A
 # cross-directory rename from /data/local/tmp can retain the wrong SELinux
 # context on some Android/provider combinations.
@@ -295,6 +299,64 @@ chmod 0600 "$PUBLISH_TMP" || fail_scan "cannot secure scan result"
 chown 0:0 "$PUBLISH_TMP" || fail_scan "cannot set scan result ownership"
 mv -f "$PUBLISH_TMP" "$OUTPUT" || fail_scan "cannot publish scan result"
 PUBLISH_TMP=
+
+# Name a commercial dex packer from the native library names in the APK listings.
+# Security/risk-control SDKs (for example NetEase libnesec) are not packers and
+# are deliberately not matched.
+# This is informational only: hardened apps can work, but their anti-tamper
+# startup is the first suspect when an injected app is killed on launch.
+hardening_of() {
+  pm path "$1" < /dev/null > "$TMP/hardening-apks" 2>/dev/null || { echo unknown; return; }
+  marker=
+  listed=0
+  while IFS= read -r apk_line; do
+    case "$apk_line" in package:*) apk=${apk_line#package:} ;; *) continue ;; esac
+    unzip -l "$apk" > "$TMP/hardening-list" 2>/dev/null || continue
+    listed=1
+    marker=$(grep -o -E \
+      'lib(jiagu|shella|shellx|SecShell|secexe|DexHelper|execmain|baiduprotect)[^/[:space:]]*\.so' \
+      "$TMP/hardening-list" | head -n 1)
+    [ -z "$marker" ] || break
+  done < "$TMP/hardening-apks"
+  [ "$listed" -ne 0 ] || { echo unknown; return; }
+  case "$marker" in
+    '') echo none ;;
+    libjiagu*) echo jiagu ;;
+    libshella*|libshellx*) echo legu ;;
+    libSecShell*|libsecexe*|libDexHelper*) echo bangcle ;;
+    libexecmain*) echo ijiami ;;
+    libbaiduprotect*) echo baidu ;;
+    *) echo unknown ;;
+  esac
+}
+
+# The candidate list is only discovery. Report what the manual rules and
+# package_modes.conf make of each candidate, using the CLI's own parsers.
+ctl() {
+  "$MPSN_BUSYBOX" sh "$SCRIPT_DIR/mipushctl" "$@" < /dev/null 2>/dev/null
+}
+
+: > "$TMP/decisions" || fail_scan "cannot initialize decision log"
+while IFS= read -r package; do
+  [ -n "$package" ] || continue
+  reason=$(awk -v package="$package" '$1 == package { print $2; exit }' "$TMP/found")
+  case "$(ctl app-status "$package")" in
+    disabled) rule=manual_deny; action=skip ;;
+    enabled) rule=manual_allow; action=inject ;;
+    custom) rule=custom; action=per_process ;;
+    auto-enabled) rule=auto_allow; action=inject ;;
+    *) rule=unknown; action=unknown ;;
+  esac
+  mode=$(ctl mode "$package")
+  mode=$(echo "${mode##*: }" | tr -d '[:space:]')
+  case "$mode" in
+    excluded) action=skip ;;
+    inherit|full|properties|build|observe) ;;
+    *) mode="invalid:${mode:-unreadable}"; action=skip ;;
+  esac
+  echo "candidate=$package reason=${reason:-unknown} rule=$rule mode=$mode action=$action" \
+    "hardening=$(hardening_of "$package")" >> "$TMP/decisions"
+done < "$OUTPUT"
 
 count=$(wc -l < "$OUTPUT" | tr -d ' ')
 {
@@ -316,6 +378,7 @@ count=$(wc -l < "$OUTPUT" | tr -d ' ')
   fi
   echo "detected=$count"
   sed 's/^/package=/' "$OUTPUT"
+  cat "$TMP/decisions"
 } > "$LOG.tmp.$$"
 if ! chmod 0600 "$LOG.tmp.$$" || ! mv -f "$LOG.tmp.$$" "$LOG"; then
   rm -f "$LOG.tmp.$$"
@@ -324,10 +387,28 @@ fi
 
 echo "Detected $count app(s) containing MiPush SDK markers:"
 if [ "$count" -gt 0 ]; then
-  sed 's/^/  - /' "$OUTPUT"
+  awk '{
+    delete field
+    for (i = 2; i <= NF; i++) { split($i, pair, "="); field[pair[1]] = substr($i, length(pair[1]) + 2) }
+    line = "  - " substr($1, 11) " (" field["action"] "; rule " field["rule"] ", mode " field["mode"] ")"
+    if (field["hardening"] != "none" && field["hardening"] != "unknown") {
+      line = line " [hardening: " field["hardening"] "]"
+    }
+    print line
+  }' "$TMP/decisions"
 else
   echo "  (none)"
 fi
+awk '{
+  delete field
+  for (i = 2; i <= NF; i++) { split($i, pair, "="); field[pair[1]] = substr($i, length(pair[1]) + 2) }
+  if (field["action"] != "skip" && field["hardening"] != "none" && field["hardening"] != "unknown") {
+    package = substr($1, 11)
+    print "Note: " package " uses " field["hardening"] " hardening. If it is killed on launch, first try"
+    print "  mipushctl mode " package " build --apply      (Build fields only, no JNI hooks)"
+    print "and if it still dies: mipushctl app " package " disable --apply"
+  }
+}' "$TMP/decisions"
 echo "Restart listed apps after editing rules. A reboot is not required for rule changes."
 if [ "$scan_incomplete" -ne 0 ]; then
   echo "Some APKs were skipped by the fast/size policy; inspect $LOG or add them manually." >&2

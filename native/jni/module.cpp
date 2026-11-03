@@ -26,6 +26,7 @@ constexpr char kOptionsPath[] = "/data/adb/mipush-spoof-next/options.conf";
 constexpr char kProfilePath[] = "/data/adb/mipush-spoof-next/profile.properties";
 constexpr char kManualPackagesPath[] = "/data/adb/mipush-spoof-next/packages.txt";
 constexpr char kAutoPackagesPath[] = "/data/adb/mipush-spoof-next/packages.auto.txt";
+constexpr char kModesPath[] = "/data/adb/mipush-spoof-next/package_modes.conf";
 
 constexpr uint32_t kMagic = 0x4d50534e;  // MPSN
 constexpr uint32_t kProtocolVersion = 1;
@@ -53,6 +54,41 @@ enum FeatureFlags : uint32_t {
     kSpoofBuildFields = 1u << 1,
     kObserveProperties = 1u << 2,
 };
+
+// Per-package capability override read from package_modes.conf. The order matches kModeNames.
+enum PackageMode : uint32_t {
+    kModeInherit = 0,
+    kModeFull = 1,
+    kModeProperties = 2,
+    kModeBuild = 3,
+    kModeObserve = 4,
+    kModeExcluded = 5,
+    kModeInvalid = 6,
+};
+
+static constexpr const char *kModeNames[] = {
+    "inherit", "full", "properties", "build", "observe", "excluded",
+};
+static_assert(sizeof(kModeNames) / sizeof(kModeNames[0]) == kModeInvalid, "mode table changed");
+
+// Final selection outcome reported in the companion's policy log. The order matches kReasonNames.
+enum PolicyReason : uint32_t {
+    kReasonBuiltInDeny = 0,
+    kReasonNoMatchingAllow = 1,
+    kReasonExplicitDeny = 2,
+    kReasonModeExcluded = 3,
+    kReasonModeInvalid = 4,
+    kReasonNoCapabilities = 5,
+    kReasonManualAllow = 6,
+    kReasonAutoAllow = 7,
+};
+
+static constexpr const char *kReasonNames[] = {
+    "built_in_deny", "no_matching_allow", "explicit_deny", "mode_excluded",
+    "mode_invalid", "no_capabilities", "manual_allow", "auto_allow",
+};
+static_assert(sizeof(kReasonNames) / sizeof(kReasonNames[0]) == kReasonAutoAllow + 1,
+              "reason table changed");
 
 struct Request {
     uint32_t magic;
@@ -91,12 +127,28 @@ struct Options {
     int log_level = 1;
 };
 
+struct RuleMatch {
+    bool allowed = false;
+    bool denied = false;
+};
+
+struct PolicyDecision {
+    bool target = false;
+    PolicyReason reason = kReasonNoMatchingAllow;
+    const char *source = "none";
+    PackageMode mode = kModeInherit;
+    uint32_t flags = 0;
+};
+
 static_assert(sizeof(Request) == 588, "IPC request layout changed");
 static_assert(sizeof(Response) == 32284, "IPC response layout changed");
 static_assert(sizeof(Response) < 65536, "IPC response must remain bounded");
 
 static Response g_config{};
 static bool g_is_target = false;
+static bool g_property_hooks_attempted = false;
+static bool g_property_hooks_live = false;
+static uint32_t g_property_hook_count = 0;
 static bool g_fake_handles_ready = false;
 static char g_process[kProcessSize]{};
 
@@ -433,7 +485,7 @@ static bool built_in_denied(const char *package_name, const char *process, int32
 }
 
 static void evaluate_rule_file(const char *path, const char *package_name, const char *process,
-                               bool *allowed, bool *denied) {
+                               RuleMatch *match) {
     FILE *file = fopen(path, "r");
     if (file == nullptr) return;
     char line[512];
@@ -448,22 +500,160 @@ static void evaluate_rule_file(const char *path, const char *package_name, const
             rule = trim(rule + 1);
         }
         if (*rule == '\0' || !matches_rule(rule, package_name, process)) continue;
-        if (is_deny) *denied = true;
-        else *allowed = true;
+        if (is_deny) match->denied = true;
+        else match->allowed = true;
     }
     fclose(file);
 }
 
-static bool is_target_process(const Request &request) {
-    char package_name[kProcessSize]{};
-    package_from_data_dir(request.app_data_dir, package_name, sizeof(package_name));
-    if (built_in_denied(package_name, request.process, request.uid)) return false;
+static PackageMode parse_mode(const char *value) {
+    for (size_t i = 0; i < sizeof(kModeNames) / sizeof(kModeNames[0]); ++i) {
+        if (equals_ignore_case(value, kModeNames[i])) return static_cast<PackageMode>(i);
+    }
+    return kModeInvalid;
+}
 
-    bool allowed = false;
-    bool denied = false;
-    evaluate_rule_file(kManualPackagesPath, package_name, request.process, &allowed, &denied);
-    evaluate_rule_file(kAutoPackagesPath, package_name, request.process, &allowed, &denied);
-    return allowed && !denied;
+// An excluded or unparseable entry wins like an explicit deny. Otherwise an exact process entry
+// beats a package entry, and the last matching line of the same scope wins.
+static PackageMode evaluate_mode_file(const char *package_name, const char *process) {
+    FILE *file = fopen(kModesPath, "r");
+    if (file == nullptr) return kModeInherit;
+    PackageMode package_mode = kModeInherit;
+    PackageMode process_mode = kModeInherit;
+    bool has_process_mode = false;
+    bool excluded = false;
+    bool invalid = false;
+    char line[512];
+    while (fgets(line, sizeof(line), file) != nullptr) {
+        char *comment = strchr(line, '#');
+        if (comment != nullptr) *comment = '\0';
+        char *entry = trim(line);
+        if (*entry == '\0') continue;
+        char *separator = strchr(entry, '=');
+        if (separator == nullptr) continue;
+        *separator = '\0';
+        char *rule = trim(entry);
+        char *value = trim(separator + 1);
+        if (*rule == '\0' || !matches_rule(rule, package_name, process)) continue;
+
+        const PackageMode mode = parse_mode(value);
+        if (mode == kModeInvalid) {
+            invalid = true;
+        } else if (mode == kModeExcluded) {
+            excluded = true;
+        } else if (strchr(rule, ':') != nullptr) {
+            process_mode = mode;
+            has_process_mode = true;
+        } else {
+            package_mode = mode;
+        }
+    }
+    fclose(file);
+    if (invalid) return kModeInvalid;
+    if (excluded) return kModeExcluded;
+    return has_process_mode ? process_mode : package_mode;
+}
+
+static uint32_t flags_for_mode(PackageMode mode, const Options &options) {
+    switch (mode) {
+        case kModeFull:
+            return kSpoofProperties | kSpoofBuildFields;
+        case kModeProperties:
+            return kSpoofProperties;
+        case kModeBuild:
+            return kSpoofBuildFields;
+        case kModeObserve:
+            return kObserveProperties;
+        case kModeInherit: {
+            uint32_t flags = 0;
+            if (options.spoof_properties) flags |= kSpoofProperties;
+            if (options.spoof_build_fields) flags |= kSpoofBuildFields;
+            if (options.observe_properties) flags |= kObserveProperties;
+            return flags;
+        }
+        case kModeExcluded:
+        case kModeInvalid:
+            break;
+    }
+    return 0;
+}
+
+static const char *mode_name_for_flags(uint32_t flags) {
+    const uint32_t spoof = flags & (kSpoofProperties | kSpoofBuildFields);
+    if (spoof == (kSpoofProperties | kSpoofBuildFields)) return "full";
+    if (spoof == kSpoofProperties) return "properties";
+    if (spoof == kSpoofBuildFields) return "build";
+    return (flags & kObserveProperties) != 0 ? "observe" : "excluded";
+}
+
+static const char *mode_name(PackageMode mode) {
+    return mode < kModeInvalid ? kModeNames[mode] : "invalid";
+}
+
+// Selection order: built-in deny, explicit deny from either rule file, an allow from either rule
+// file, then the package mode. Nothing here can turn a deny into a target.
+static void resolve_policy(const Request &request, const char *package_name,
+                           const Options &options, PolicyDecision *decision) {
+    if (built_in_denied(package_name, request.process, request.uid)) {
+        decision->reason = kReasonBuiltInDeny;
+        decision->source = "builtin";
+        return;
+    }
+
+    RuleMatch manual;
+    RuleMatch automatic;
+    evaluate_rule_file(kManualPackagesPath, package_name, request.process, &manual);
+    evaluate_rule_file(kAutoPackagesPath, package_name, request.process, &automatic);
+    if (manual.denied || automatic.denied) {
+        decision->reason = kReasonExplicitDeny;
+        decision->source = manual.denied ? "manual" : "auto";
+        return;
+    }
+    if (!manual.allowed && !automatic.allowed) {
+        decision->reason = kReasonNoMatchingAllow;
+        return;
+    }
+
+    decision->mode = evaluate_mode_file(package_name, request.process);
+    if (decision->mode == kModeExcluded || decision->mode == kModeInvalid) {
+        decision->reason = decision->mode == kModeExcluded ? kReasonModeExcluded : kReasonModeInvalid;
+        decision->source = "modes";
+        return;
+    }
+    decision->flags = flags_for_mode(decision->mode, options);
+    if (decision->flags == 0) {
+        decision->reason = kReasonNoCapabilities;
+        decision->source = decision->mode == kModeInherit ? "options" : "modes";
+        return;
+    }
+    decision->target = true;
+    decision->reason = manual.allowed ? kReasonManualAllow : kReasonAutoAllow;
+    decision->source = manual.allowed ? "manual" : "auto";
+}
+
+// Runs in the companion, which never receives a snapshot, so it uses the parsed options rather
+// than the LOG_* macros. Processes without any matching rule are only reported at debug level.
+static void log_policy(const Options &options, const Request &request, const char *package_name,
+                       const PolicyDecision &decision, uint32_t status) {
+    const char *package = package_name[0] != '\0' ? package_name : "-";
+    const char *mode = decision.target ? mode_name_for_flags(decision.flags) : "excluded";
+    if (status == kConfigError || decision.reason == kReasonModeInvalid) {
+        __android_log_print(ANDROID_LOG_ERROR, kLogTag,
+                            "policy package=%s process=%s mode=excluded override=%s reason=%s "
+                            "source=%s error=%s",
+                            package, request.process, mode_name(decision.mode),
+                            kReasonNames[decision.reason], decision.source,
+                            status == kConfigError ? "profile_missing_or_invalid" : "unknown_mode");
+        return;
+    }
+    const bool matched_rule = decision.reason != kReasonBuiltInDeny &&
+                              decision.reason != kReasonNoMatchingAllow;
+    if (options.log_level < (matched_rule ? 1 : 2)) return;
+    __android_log_print(matched_rule ? ANDROID_LOG_INFO : ANDROID_LOG_DEBUG, kLogTag,
+                        "policy package=%s process=%s uid=%d mode=%s override=%s reason=%s "
+                        "source=%s flags=0x%x",
+                        package, request.process, request.uid, mode, mode_name(decision.mode),
+                        kReasonNames[decision.reason], decision.source, decision.flags);
 }
 
 static const PropertyEntry *find_property(const char *key) {
@@ -699,48 +889,93 @@ static jboolean hooked_get_handle_boolean(jlong handle, jboolean fallback) {
                : fallback;
 }
 
+struct PropertyHook {
+    const char *name;
+    const char *signature;
+    void *replacement;
+    void **original;
+};
+
 template <typename Function>
-static void save_original(Function *destination, void *source) {
-    *reinterpret_cast<void **>(destination) = source;
+static void **original_slot(Function *destination) {
+    return reinterpret_cast<void **>(destination);
 }
 
-static bool install_system_property_hooks(zygisk::Api *api, JNIEnv *env) {
-    JNINativeMethod methods[] = {
-        {"native_get", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", reinterpret_cast<void *>(hooked_get_string)},
-        {"native_get", "(Ljava/lang/String;)Ljava/lang/String;", reinterpret_cast<void *>(hooked_get_string_legacy)},
-        {"native_get_int", "(Ljava/lang/String;I)I", reinterpret_cast<void *>(hooked_get_int)},
-        {"native_get_long", "(Ljava/lang/String;J)J", reinterpret_cast<void *>(hooked_get_long)},
-        {"native_get_boolean", "(Ljava/lang/String;Z)Z", reinterpret_cast<void *>(hooked_get_boolean)},
-        {"native_find", "(Ljava/lang/String;)J", reinterpret_cast<void *>(hooked_find)},
-        {"native_get", "(J)Ljava/lang/String;", reinterpret_cast<void *>(hooked_get_handle_string)},
-        {"native_get_int", "(JI)I", reinterpret_cast<void *>(hooked_get_handle_int)},
-        {"native_get_long", "(JJ)J", reinterpret_cast<void *>(hooked_get_handle_long)},
-        {"native_get_boolean", "(JZ)Z", reinterpret_cast<void *>(hooked_get_handle_boolean)},
+// Each signature is hooked on its own so a variant missing from this Android/OEM build cannot
+// hide the outcome of the others, and any exception the provider leaves behind is cleared before
+// zygote makes its next JNI call. Returns the number of live hooks; a second call is a no-op.
+static uint32_t install_system_property_hooks(zygisk::Api *api, JNIEnv *env) {
+    if (g_property_hooks_attempted) {
+        LOG_INFO("SystemProperties hooks already attempted process=%s installed=%u; skipping",
+                 g_process, g_property_hook_count);
+        return g_property_hook_count;
+    }
+    g_property_hooks_attempted = true;
+
+    const PropertyHook hooks[] = {
+        {"native_get", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+         reinterpret_cast<void *>(hooked_get_string), original_slot(&g_original_get_string)},
+        {"native_get", "(Ljava/lang/String;)Ljava/lang/String;",
+         reinterpret_cast<void *>(hooked_get_string_legacy), original_slot(&g_original_get_string_legacy)},
+        {"native_get_int", "(Ljava/lang/String;I)I",
+         reinterpret_cast<void *>(hooked_get_int), original_slot(&g_original_get_int)},
+        {"native_get_long", "(Ljava/lang/String;J)J",
+         reinterpret_cast<void *>(hooked_get_long), original_slot(&g_original_get_long)},
+        {"native_get_boolean", "(Ljava/lang/String;Z)Z",
+         reinterpret_cast<void *>(hooked_get_boolean), original_slot(&g_original_get_boolean)},
+        {"native_find", "(Ljava/lang/String;)J",
+         reinterpret_cast<void *>(hooked_find), original_slot(&g_original_find)},
+        {"native_get", "(J)Ljava/lang/String;",
+         reinterpret_cast<void *>(hooked_get_handle_string), original_slot(&g_original_get_handle_string)},
+        {"native_get_int", "(JI)I",
+         reinterpret_cast<void *>(hooked_get_handle_int), original_slot(&g_original_get_handle_int)},
+        {"native_get_long", "(JJ)J",
+         reinterpret_cast<void *>(hooked_get_handle_long), original_slot(&g_original_get_handle_long)},
+        {"native_get_boolean", "(JZ)Z",
+         reinterpret_cast<void *>(hooked_get_handle_boolean), original_slot(&g_original_get_handle_boolean)},
     };
-    api->hookJniNativeMethods(env, "android/os/SystemProperties", methods,
-                              static_cast<int>(sizeof(methods) / sizeof(methods[0])));
+    constexpr uint32_t kHookCount = sizeof(hooks) / sizeof(hooks[0]);
 
-    save_original(&g_original_get_string, methods[0].fnPtr);
-    save_original(&g_original_get_string_legacy, methods[1].fnPtr);
-    save_original(&g_original_get_int, methods[2].fnPtr);
-    save_original(&g_original_get_long, methods[3].fnPtr);
-    save_original(&g_original_get_boolean, methods[4].fnPtr);
-    save_original(&g_original_find, methods[5].fnPtr);
-    save_original(&g_original_get_handle_string, methods[6].fnPtr);
-    save_original(&g_original_get_handle_int, methods[7].fnPtr);
-    save_original(&g_original_get_handle_long, methods[8].fnPtr);
-    save_original(&g_original_get_handle_boolean, methods[9].fnPtr);
+    for (const PropertyHook &hook : hooks) {
+        JNINativeMethod method = {hook.name, hook.signature, hook.replacement};
+        api->hookJniNativeMethods(env, "android/os/SystemProperties", &method, 1);
+        const bool exception = env->ExceptionCheck() == JNI_TRUE;
+        if (exception) env->ExceptionClear();
 
-    const bool string_key_ready = g_original_get_string != nullptr;
+        void *original = method.fnPtr;
+        const bool live = original != nullptr;
+        if (original == hook.replacement) {
+            // The hook is registered but the previous entry is unknown; never let it call itself.
+            original = nullptr;
+            LOG_ERROR("hook_failure process=%s api=SystemProperties.%s%s action=fall_back "
+                      "reason=original_unknown", g_process, hook.name, hook.signature);
+        }
+        *hook.original = original;
+        if (live) ++g_property_hook_count;
+
+        if (exception) {
+            LOG_ERROR("hook_failure process=%s api=SystemProperties.%s%s action=fall_back "
+                      "reason=jni_exception_cleared live=%d", g_process, hook.name, hook.signature,
+                      live ? 1 : 0);
+        } else if (!live) {
+            LOG_DEBUG("hook_unavailable process=%s api=SystemProperties.%s%s action=fall_back",
+                      g_process, hook.name, hook.signature);
+        } else {
+            LOG_DEBUG("hook_installed process=%s api=SystemProperties.%s%s",
+                      g_process, hook.name, hook.signature);
+        }
+    }
+
     g_fake_handles_ready = g_original_find != nullptr && g_original_get_handle_string != nullptr &&
                            g_original_get_handle_int != nullptr && g_original_get_handle_long != nullptr &&
                            g_original_get_handle_boolean != nullptr;
-    LOG_INFO("SystemProperties hooks process=%s string=%d int=%d long=%d bool=%d handles=%d legacy=%d",
-             g_process, string_key_ready ? 1 : 0, g_original_get_int != nullptr ? 1 : 0,
-             g_original_get_long != nullptr ? 1 : 0, g_original_get_boolean != nullptr ? 1 : 0,
-             g_fake_handles_ready ? 1 : 0, g_original_get_string_legacy != nullptr ? 1 : 0);
-    return string_key_ready || g_original_get_int != nullptr || g_original_get_long != nullptr ||
-           g_original_get_boolean != nullptr;
+    LOG_INFO("SystemProperties hooks process=%s installed=%u/%u string=%d int=%d long=%d bool=%d "
+             "handles=%d legacy=%d",
+             g_process, g_property_hook_count, kHookCount, g_original_get_string != nullptr ? 1 : 0,
+             g_original_get_int != nullptr ? 1 : 0, g_original_get_long != nullptr ? 1 : 0,
+             g_original_get_boolean != nullptr ? 1 : 0, g_fake_handles_ready ? 1 : 0,
+             g_original_get_string_legacy != nullptr ? 1 : 0);
+    return g_property_hook_count;
 }
 
 static void clear_pending_exception(JNIEnv *env) {
@@ -755,6 +990,9 @@ static void apply_build_fields(JNIEnv *env) {
         return;
     }
     jclass version_class = nullptr;
+    uint32_t applied = 0;
+    uint32_t missing = 0;
+    uint32_t failed = 0;
 
     for (uint32_t i = 0; i < g_config.build_count; ++i) {
         const BuildEntry &entry = g_config.build_fields[i];
@@ -765,6 +1003,7 @@ static void apply_build_fields(JNIEnv *env) {
                 version_class = env->FindClass("android/os/Build$VERSION");
                 if (version_class == nullptr) {
                     clear_pending_exception(env);
+                    ++missing;
                     continue;
                 }
             }
@@ -775,19 +1014,23 @@ static void apply_build_fields(JNIEnv *env) {
         const jfieldID field = env->GetStaticFieldID(target_class, field_name, "Ljava/lang/String;");
         if (field == nullptr) {
             clear_pending_exception(env);
+            ++missing;
             LOG_DEBUG("Build field missing process=%s field=%s", g_process, entry.field);
             continue;
         }
         jstring value = env->NewStringUTF(entry.value);
         if (value == nullptr) {
             clear_pending_exception(env);
+            ++failed;
             continue;
         }
         env->SetStaticObjectField(target_class, field, value);
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
+            ++failed;
             LOG_ERROR("Build field write failed process=%s field=%s", g_process, entry.field);
         } else {
+            ++applied;
             LOG_DEBUG("Build field applied process=%s field=%s", g_process, entry.field);
         }
         env->DeleteLocalRef(value);
@@ -795,7 +1038,8 @@ static void apply_build_fields(JNIEnv *env) {
 
     if (version_class != nullptr) env->DeleteLocalRef(version_class);
     env->DeleteLocalRef(build_class);
-    LOG_INFO("Build profile applied process=%s fields=%u", g_process, g_config.build_count);
+    LOG_INFO("Build profile applied process=%s fields=%u applied=%u missing=%u failed=%u",
+             g_process, g_config.build_count, applied, missing, failed);
 }
 
 static void jstring_to_buffer(JNIEnv *env, jstring value, char *buffer, size_t buffer_size) {
@@ -854,19 +1098,30 @@ public:
         g_config = response;
         g_is_target = true;
         copy_string(g_process, sizeof(g_process), request.process);
-        LOG_INFO("target selected process=%s props=%u fields=%u flags=0x%x state=%s",
-                 g_process, g_config.property_count, g_config.build_count, g_config.flags, kStateDir);
+        LOG_INFO("target selected process=%s mode=%s props=%u fields=%u flags=0x%x state=%s",
+                 g_process, mode_name_for_flags(g_config.flags), g_config.property_count,
+                 g_config.build_count, g_config.flags, kStateDir);
 
         if ((g_config.flags & (kSpoofProperties | kObserveProperties)) != 0) {
-            if (!install_system_property_hooks(api_, env_)) {
-                LOG_ERROR("No compatible SystemProperties JNI methods process=%s; continuing Build-only", g_process);
+            g_property_hooks_live = install_system_property_hooks(api_, env_) > 0;
+            if (!g_property_hooks_live) {
+                LOG_ERROR("No compatible SystemProperties JNI methods process=%s; continuing without "
+                          "property hooks", g_process);
             }
+        }
+        if (!g_property_hooks_live) {
+            // No JNI entry points into this library: Zygisk unloads it after postAppSpecialize has
+            // written the Build fields, so a Build-only target keeps no module mapping.
+            api_->setOption(zygisk::DLCLOSE_MODULE_LIBRARY);
+            LOG_DEBUG("module unload scheduled process=%s reason=no_live_hooks", g_process);
         }
     }
 
     void postAppSpecialize(const zygisk::AppSpecializeArgs * /*args*/) override {
         if (g_is_target && (g_config.flags & kSpoofBuildFields) != 0) apply_build_fields(env_);
-        if (g_is_target && (g_config.flags & kObserveProperties) != 0) start_observer_logger();
+        if (g_is_target && g_property_hooks_live && (g_config.flags & kObserveProperties) != 0) {
+            start_observer_logger();
+        }
     }
 
     void preServerSpecialize(zygisk::ServerSpecializeArgs * /*args*/) override {
@@ -889,16 +1144,18 @@ static void companion_handler(int client) {
     response.version = kProtocolVersion;
     response.status = kNotTarget;
 
-    if (is_target_process(request)) {
-        Options options;
-        parse_options(&options);
+    Options options;
+    parse_options(&options);
+    char package_name[kProcessSize]{};
+    package_from_data_dir(request.app_data_dir, package_name, sizeof(package_name));
+    PolicyDecision decision;
+    resolve_policy(request, package_name, options, &decision);
+    if (decision.target) {
         response.log_level = options.log_level;
-        if (options.spoof_properties) response.flags |= kSpoofProperties;
-        if (options.spoof_build_fields) response.flags |= kSpoofBuildFields;
-        if (options.observe_properties) response.flags |= kObserveProperties;
-        if (parse_profile(&response)) response.status = kTarget;
-        else response.status = kConfigError;
+        response.flags = decision.flags;
+        response.status = parse_profile(&response) ? kTarget : kConfigError;
     }
+    log_policy(options, request, package_name, decision, response.status);
 
     write_fully(client, &response, sizeof(response), deadline);
 }

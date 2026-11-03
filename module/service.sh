@@ -16,9 +16,12 @@ done
 [ -f "$STATE/options.conf" ] || cp -f "$MODDIR/defaults/options.conf" "$STATE/options.conf" || exit 1
 [ -f "$STATE/packages.txt" ] || cp -f "$MODDIR/defaults/packages.txt" "$STATE/packages.txt" || exit 1
 [ -f "$STATE/packages.auto.txt" ] || : > "$STATE/packages.auto.txt" || exit 1
+[ -f "$STATE/package_modes.conf" ] || \
+  cp -f "$MODDIR/defaults/package_modes.conf" "$STATE/package_modes.conf" || exit 1
 [ -f "$STATE/profile.properties" ] || \
   cp -f "$MODDIR/defaults/profiles/miui14.properties" "$STATE/profile.properties" || exit 1
 
 chmod 0600 "$STATE/options.conf" "$STATE/profile.properties" \
-  "$STATE/packages.txt" "$STATE/packages.auto.txt" "$STATE/profiles"/*.properties || exit 1
+  "$STATE/packages.txt" "$STATE/packages.auto.txt" "$STATE/package_modes.conf" \
+  "$STATE/profiles"/*.properties || exit 1
 chown -R 0:0 "$STATE" || exit 1

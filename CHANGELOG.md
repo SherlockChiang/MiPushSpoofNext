@@ -5,6 +5,10 @@
 - 新增 `package_modes.conf` 包级能力模式：`inherit`、`full`、`properties`、`build`、`observe`、
   `excluded`，以及 `mipushctl mode <规则> [模式] [--apply]`。模式只决定选中后的能力，不会单独
   选中包；`excluded` 与未知模式值都会排除进程。
+- WebUI 每个应用新增“伪装模式”按钮，点按后从底部弹出带说明的模式面板；“跟随全局”直接显示
+  当前等效模式（如“完整伪装”），加固应用显示标签并在“仅 Build”上标注推荐，被排除的已启用应用
+  标注“不注入”。`mipushctl apps` 增加模式、加固类型和进程级模式数三列，新增
+  `mipushctl inherit-mode` 输出 options.conf 下“跟随全局”的等效模式。
 - companion 为每个进程输出最终策略日志（`policy ... mode= reason= source=`），区分内置 deny、
   显式 deny、无 allow、模式排除、手工 allow 与自动 allow。
 - `SystemProperties` 改为逐签名挂钩，清理 provider 遗留的 JNI 异常，记录每个签名的结果，并防止

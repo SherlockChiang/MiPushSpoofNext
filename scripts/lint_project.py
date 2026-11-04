@@ -97,7 +97,7 @@ def main():
     if not webui.is_file():
         raise AssertionError("module/webroot/index.html is required for the graphical manager UI")
     webui_text = webui.read_text(encoding="utf-8")
-    for marker in ('import("kernelsu")', 'CONTROL+" apps"', 'CONTROL+" app "'):
+    for marker in ('import("kernelsu")', 'CONTROL+" apps"', 'CONTROL+" app "', 'CONTROL+" mode "'):
         if marker not in webui_text:
             raise AssertionError(f"WebUI is missing required integration marker: {marker}")
 

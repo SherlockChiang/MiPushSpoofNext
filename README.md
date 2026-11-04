@@ -84,7 +84,10 @@ su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl auto com.example.app:ca
 deny 同时残留。`auto` 表示删除手工覆盖；如果扫描仍命中该包，它仍会自动启用。
 
 WebUI 页面会显示自动命中、始终启用、始终禁用、自定义进程规则和受保护状态；支持包名
-筛选、手动添加漏扫包，以及“修改后立即停止应用”。WebUI 只调用模块自带的 root CLI，
+筛选、手动添加漏扫包，以及“修改后立即停止应用”。每个应用下方还有“伪装模式”按钮，
+点按后从底部弹出各模式及说明，对应 `mipushctl mode` 的包级模式；“跟随全局”会直接显示按当前
+options.conf 等效的模式（默认配置下为“完整伪装”）；扫描识别出的加固应用会带“360 加固”等标签，被模式排除的
+已启用应用会标注“模式排除，不注入”，`包名:进程` 级模式仍需用 CLI 管理。WebUI 只调用模块自带的 root CLI，
 不会把配置或日志上传到网络；Magisk 用户可使用同一 CLI 和 Action 入口。
 
 ## 更新
@@ -127,6 +130,8 @@ Release 附件尚未就绪时误报更新。该格式与 Magisk 官方模块更�
 su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl mode com.example.app build --apply'
 # 其余模式：inherit（默认，跟随 options.conf）、full、properties、observe、excluded
 su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl mode com.example.app'
+# 查看 inherit 按当前 options.conf 等效于哪种模式（默认配置为 full）
+su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl inherit-mode'
 ```
 
 包级模式同样覆盖冒号子进程，`包名:进程` 条目可单独覆盖；`excluded` 优先于其他模式，未知模式值

@@ -16,7 +16,12 @@ h1{margin:0;font-size:24px}h2{margin:0;font-size:18px}p{margin:7px 0}.muted{colo
 #status{min-height:24px;margin-top:10px;color:var(--muted)}#status.ok{color:var(--green)}#status.error{color:var(--red)}
 #filter{width:100%;margin-top:6px}.unsupported{border-color:#c58a00;background:#fff8df}.unsupported[hidden]{display:none}@media(prefers-color-scheme:dark){.unsupported{background:#3b3218}}
 table{width:100%;margin-top:12px;border-collapse:collapse}th,td{padding:10px 5px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}th{font-size:13px;color:var(--muted)}td.pkg{font:13px ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}.app-name{display:block;font-weight:600}.badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;white-space:nowrap}.badge.enabled,.badge.auto-enabled{color:var(--green);background:var(--greenbg)}.badge.disabled{color:var(--red);background:var(--redbg)}.badge.auto-inactive,.badge.custom,.badge.protected{color:var(--muted);background:#e9edf1}@media(prefers-color-scheme:dark){.badge.auto-inactive,.badge.custom,.badge.protected{background:#303840}}
-.actions{display:flex;justify-content:flex-end;gap:5px;flex-wrap:wrap}.actions button{min-height:34px;padding:0 8px;font-size:12px}.empty{text-align:center;padding:20px 5px;color:var(--muted)}details{margin-top:12px}pre{max-height:220px;overflow:auto;padding:10px;border-radius:9px;background:var(--bg);color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}.tip{margin-top:10px;font-size:13px;color:var(--muted)}code{font-family:ui-monospace,SFMono-Regular,monospace}
+.actions{display:flex;justify-content:flex-end;gap:5px;flex-wrap:wrap}.actions button{min-height:34px;padding:0 8px;font-size:12px}
+tr.has-mode td{border-bottom:0;padding-bottom:3px}tr.mode-row td{padding-top:0}.mode{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;font-size:12px;color:var(--muted)}.mode-button{display:inline-flex;align-items:center;gap:6px;min-height:34px;max-width:100%;padding:0 12px;border-radius:999px;font-size:12px}.mode-button .chev{color:var(--muted);font-size:14px;line-height:1}.mode-button.invalid{color:var(--red);border-color:var(--red)}
+.sheet{position:fixed;inset:0;z-index:10}.sheet[hidden]{display:none}.sheet-backdrop{position:absolute;inset:0;background:#00000073;opacity:0;transition:opacity .18s}.sheet-panel{position:absolute;left:0;right:0;bottom:0;max-width:560px;max-height:88vh;margin:0 auto;overflow:auto;padding:10px 16px max(16px,env(safe-area-inset-bottom));background:var(--card);border-radius:20px 20px 0 0;box-shadow:0 -6px 24px #00000038;transform:translateY(100%);transition:transform .22s ease}.sheet.open .sheet-backdrop{opacity:1}.sheet.open .sheet-panel{transform:none}
+.sheet-handle{width:38px;height:4px;margin:0 auto 12px;border-radius:2px;background:var(--line)}.sheet-panel h2{font-size:17px}.sheet-app{margin:2px 0 6px;font-size:13px;color:var(--muted);overflow-wrap:anywhere}.sheet-option{display:flex;align-items:center;gap:12px;width:100%;margin-top:8px;padding:10px 12px;text-align:left;border-radius:12px}.sheet-option[aria-checked="true"]{border-color:var(--blue);background:var(--bluebg)}.sheet-option .text{display:flex;flex:1;flex-direction:column;gap:2px}.sheet-option .title{font-weight:600}.sheet-option .desc{font-size:12px;color:var(--muted)}.sheet-option .badge{margin-left:6px;font-weight:400}.badge.rec{color:var(--green);background:var(--greenbg)}
+.radio{display:grid;flex:none;place-items:center;width:20px;height:20px;border:2px solid var(--line);border-radius:50%;color:#fff;font-size:12px}.sheet-option[aria-checked="true"] .radio{border-color:var(--blue);background:var(--blue)}.sheet-cancel{width:100%;margin-top:12px}@media(prefers-reduced-motion:reduce){.sheet-backdrop,.sheet-panel{transition:none}}
+.badge.warn{margin-top:4px;color:#8a5a00;background:#fff1cc}@media(prefers-color-scheme:dark){.badge.warn{color:#ffd479;background:#3b3218}}.sub{display:block;margin-top:4px;font-size:12px;color:var(--red)}.note{display:block;margin-top:3px;font-size:12px;color:var(--muted)}.empty{text-align:center;padding:20px 5px;color:var(--muted)}details{margin-top:12px}pre{max-height:220px;overflow:auto;padding:10px;border-radius:9px;background:var(--bg);color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}.tip{margin-top:10px;font-size:13px;color:var(--muted)}code{font-family:ui-monospace,SFMono-Regular,monospace}
 </style>
 </head>
 <body>
@@ -31,10 +36,12 @@ table{width:100%;margin-top:12px;border-collapse:collapse}th,td{padding:10px 5px
 su -c '/data/adb/modules/mipush-spoof-next/bin/mipushctl app com.example.app disable --apply'</pre></div>
 <label class="muted" for="filter">筛选包名</label><input id="filter" type="search" placeholder="例如 com.sankuai.meituan" autocomplete="off">
 <div id="table"><div class="empty">尚未读取应用状态，请点击扫描或刷新。</div></div>
+<p class="tip">伪装模式只作用于已启用的应用；点按应用下方的“伪装模式”可查看每种模式的说明。</p>
 <details><summary>最近一次扫描输出</summary><pre id="output">暂无</pre></details>
 </section>
 <section class="card"><h2>手动添加应用</h2><p class="muted">自动扫描漏报时，输入完整包名并设为始终启用。</p><form id="add" class="form"><input id="pkg" inputmode="text" placeholder="com.example.app" autocomplete="off" required><button class="primary" type="submit">添加并启用</button></form><div class="tip">规则修改只对新启动的进程生效；勾选上方选项可自动强停。</div></section>
 </main>
+<div id="sheet" class="sheet" hidden><div class="sheet-backdrop" data-close></div><section class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title"><div class="sheet-handle" aria-hidden="true"></div><h2 id="sheet-title">伪装模式</h2><div id="sheet-app" class="sheet-app"></div><div id="sheet-options" role="radiogroup" aria-labelledby="sheet-title"></div><button type="button" class="sheet-cancel" data-close>取消</button></section></div>
 <script type="module">
 const CONTROL="/data/adb/modules/mipush-spoof-next/bin/mipushctl";
 const PACKAGE_RE=/^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -52,8 +59,58 @@ async function run(command){
   if(errno!==0)throw new Error(stderr||stdout||("命令失败（"+errno+"）"));
   return stdout;
 }
+const MODES=[
+  ["inherit","跟随全局","使用 options.conf 的全局开关"],
+  ["full","完整伪装","同时修改系统属性和 Build 字段"],
+  ["properties","仅系统属性","只挂钩 SystemProperties，不改 Build"],
+  ["build","仅 Build","不装 JNI hook，模块随后卸载；加固应用首选"],
+  ["observe","仅观察","挂钩但不改值，只记录读取的属性名，用于诊断"],
+  ["excluded","排除注入","不对这个应用做任何修改"]];
+const PACKERS={jiagu:"360 加固",legu:"腾讯乐固",bangcle:"梆梆加固",ijiami:"爱加密",baidu:"百度加固"};
+const GLOBAL_NAMES={full:"完整伪装",properties:"仅系统属性",build:"仅 Build",observe:"仅观察",none:"不注入"};
+let globalMode="",sheetPackage="";
 function label(state){return({"auto-enabled":"自动 · 已启用","auto-inactive":"自动 · 未命中",enabled:"始终启用",disabled:"始终禁用",custom:"自定义进程规则",protected:"受保护"})[state]||state}
-function parse(text){return text.split(/\r?\n/).filter(Boolean).map((line)=>{const tab=line.indexOf("\t");if(tab<1)return null;const state=line.slice(0,tab),pkg=line.slice(tab+1).trim();return validPackage(pkg)?{state:state,package:pkg,label:""}:null}).filter(Boolean).sort((a,b)=>a.package.localeCompare(b.package))}
+function knownMode(mode){return MODES.some((item)=>item[0]===mode)}
+// mipushctl inherit-mode prints full, properties, build, observe or none, optionally with "+observe".
+function inheritSummary(){const part=globalMode.split("+"),name=GLOBAL_NAMES[part[0]];return name?name+(part[1]==="observe"?"，含观察":""):""}
+function modeLabel(mode){const found=MODES.find((item)=>item[0]===mode);return found?found[1]:"无效（已排除）"}
+function rowModeLabel(mode){
+  if(mode==="inherit"){const summary=inheritSummary();return summary?"跟随全局 · "+summary:"跟随全局"}
+  return knownMode(mode)?modeLabel(mode):"无效："+mode;
+}
+// mipushctl apps: state, package, package mode, detected packer, package:process mode count.
+function parse(text){return text.split(/\r?\n/).filter(Boolean).map((line)=>{const field=line.split("\t");if(field.length<2||!field[0])return null;const pkg=field[1].trim();return validPackage(pkg)?{state:field[0],package:pkg,mode:(field[2]||"inherit").trim(),hardening:(field[3]||"none").trim(),processModes:Number(field[4])||0,label:""}:null}).filter(Boolean).sort((a,b)=>a.package.localeCompare(b.package))}
+function modeControl(row){
+  if(row.state==="protected")return "";
+  const overrides=row.processModes>0?"<span>另有 "+row.processModes+" 条进程级模式</span>":"";
+  return "<tr class=\"mode-row\"><td colspan=\"3\"><div class=\"mode\"><span>伪装模式</span><button type=\"button\" class=\"mode-button"+(knownMode(row.mode)?"":" invalid")+
+    "\" data-mode-pkg=\""+esc(row.package)+"\" aria-haspopup=\"dialog\">"+esc(rowModeLabel(row.mode))+"<span class=\"chev\" aria-hidden=\"true\">›</span></button>"+overrides+"</div></td></tr>";
+}
+function openSheet(pkg){
+  const row=rows.find((item)=>item.package===pkg);
+  if(busy||!row)return;
+  sheetPackage=pkg;
+  byId("sheet-app").textContent=row.label?row.label+" · "+pkg:pkg;
+  byId("sheet-options").innerHTML=MODES.map((item)=>{
+    const checked=item[0]===row.mode,summary=item[0]==="inherit"?inheritSummary():"";
+    const recommended=item[0]==="build"&&PACKERS[row.hardening]?"<span class=\"badge rec\">推荐</span>":"";
+    const name=item[1]+(summary?"（当前："+summary+"）":"")+(recommended?"，推荐":"")+"："+item[2];
+    return "<button type=\"button\" class=\"sheet-option\" role=\"radio\" aria-checked=\""+checked+"\" aria-label=\""+esc(name)+"\" data-mode=\""+item[0]+"\"><span class=\"radio\" aria-hidden=\"true\">"+(checked?"✓":"")+
+      "</span><span class=\"text\"><span class=\"title\">"+esc(item[1])+(summary?"（当前："+esc(summary)+"）":"")+recommended+"</span><span class=\"desc\">"+esc(item[2])+"</span></span></button>";
+  }).join("");
+  const sheet=byId("sheet");
+  sheet.hidden=false;document.body.style.overflow="hidden";
+  void sheet.offsetWidth;sheet.classList.add("open");
+  (sheet.querySelector("[aria-checked=\"true\"]")||sheet.querySelector(".sheet-option")).focus();
+}
+function closeSheet(){
+  const sheet=byId("sheet"),pkg=sheetPackage;
+  if(sheet.hidden)return;
+  sheet.classList.remove("open");document.body.style.overflow="";sheetPackage="";
+  setTimeout(()=>{if(!sheet.classList.contains("open"))sheet.hidden=true},220);
+  const trigger=Array.from(document.querySelectorAll("button[data-mode-pkg]")).find((button)=>button.dataset.modePkg===pkg);
+  if(trigger)trigger.focus();
+}
 async function addLabels(){
   if(!packageInfoFn||!rows.length)return;
   try{
@@ -73,12 +130,21 @@ function render(){
       "<button type=\"button\" data-pkg=\""+esc(row.package)+"\" data-state=\"enabled\">启用</button>"+
       "<button type=\"button\" class=\"danger\" data-pkg=\""+esc(row.package)+"\" data-state=\"disabled\">禁用</button>";
     const name=row.label?"<span class=\"app-name\">"+esc(row.label)+"</span>":"";
-    return "<tr><td><span class=\"badge "+esc(row.state)+"\">"+esc(label(row.state))+"</span></td><td class=\"pkg\">"+name+esc(row.package)+"</td><td><div class=\"actions\">"+buttons+"</div></td></tr>";
+    const selected=row.state==="enabled"||row.state==="auto-enabled"||row.state==="custom";
+    const globalOff=row.mode==="inherit"&&globalMode==="none";
+    const blocked=row.mode==="excluded"||!knownMode(row.mode)||globalOff;
+    const excludedNote=selected&&blocked?"<span class=\"sub\">"+(globalOff?"全局开关均已关闭，不注入":"模式排除，不注入")+"</span>":"";
+    const packer=PACKERS[row.hardening]?"<br><span class=\"badge warn\">"+esc(PACKERS[row.hardening])+"</span>"+
+      (selected&&!blocked&&row.mode!=="build"?"<span class=\"note\">启动闪退时选“仅 Build”</span>":""):"";
+    const mode=modeControl(row);
+    return "<tr"+(mode?" class=\"has-mode\"":"")+"><td><span class=\"badge "+esc(row.state)+"\">"+esc(label(row.state))+"</span>"+excludedNote+"</td><td class=\"pkg\">"+name+esc(row.package)+packer+"</td><td><div class=\"actions\">"+buttons+"</div></td></tr>"+mode;
   }).join("");
   byId("table").innerHTML="<table><thead><tr><th>状态</th><th>包名</th><th>操作</th></tr></thead><tbody>"+body+"</tbody></table>";
 }
 async function load(){
-  const text=await run(CONTROL+" apps");rows=parse(text);await addLabels();render();message(rows.length+" 个应用状态已加载","ok");
+  const text=await run(CONTROL+" apps");rows=parse(text);
+  try{globalMode=(await run(CONTROL+" inherit-mode")).trim()}catch(_error){globalMode=""}
+  await addLabels();render();message(rows.length+" 个应用状态已加载","ok");
 }
 async function scan(){
   if(busy)return;busy=true;byId("scan").disabled=true;message("正在扫描，较大的 APK 可能需要一点时间…");
@@ -90,8 +156,23 @@ async function changeState(pkg,state){
   try{const apply=byId("apply").checked?" --apply":"";const text=await run(CONTROL+" app "+quote(pkg)+" "+state+apply);output.textContent=text||output.textContent;if(toastFn)toastFn(pkg+"："+label(state==="enabled"?"enabled":state==="disabled"?"disabled":"auto-enabled"));await load()}
   catch(error){message(error.message,"error")}finally{busy=false}
 }
+async function changeMode(pkg,mode){
+  if(busy||!knownMode(mode)){render();return}busy=true;message("正在设置 "+pkg+" 的模式…");
+  try{const apply=byId("apply").checked?" --apply":"";const text=await run(CONTROL+" mode "+quote(pkg)+" "+mode+apply);output.textContent=text||output.textContent;if(toastFn)toastFn(pkg+"："+modeLabel(mode));await load()}
+  catch(error){message(error.message,"error");render()}finally{busy=false}
+}
+byId("sheet").addEventListener("click",(event)=>{
+  if(event.target.closest("[data-close]")){closeSheet();return}
+  const option=event.target.closest("button[data-mode]");if(!option)return;
+  const pkg=sheetPackage,row=rows.find((item)=>item.package===pkg),mode=option.dataset.mode;
+  closeSheet();if(row&&row.mode!==mode)changeMode(pkg,mode);
+});
+document.addEventListener("keydown",(event)=>{if(event.key==="Escape")closeSheet()});
 byId("scan").addEventListener("click",scan);byId("refresh").addEventListener("click",()=>{if(!busy)load().catch((e)=>message(e.message,"error"))});byId("filter").addEventListener("input",render);
-byId("table").addEventListener("click",(event)=>{const button=event.target.closest("button[data-pkg]");if(button)changeState(button.dataset.pkg,button.dataset.state)});
+byId("table").addEventListener("click",(event)=>{
+  const modeButton=event.target.closest("button[data-mode-pkg]");if(modeButton){openSheet(modeButton.dataset.modePkg);return}
+  const button=event.target.closest("button[data-pkg]");if(button)changeState(button.dataset.pkg,button.dataset.state);
+});
 byId("add").addEventListener("submit",(event)=>{event.preventDefault();const pkg=byId("pkg").value.trim();if(!validPackage(pkg)){message("请输入有效的 Android 包名，例如 com.example.app","error");return}changeState(pkg,"enabled");byId("pkg").value=""});
 let callbackId=0;
 function bridgeExec(command){

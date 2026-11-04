@@ -352,7 +352,7 @@ while IFS= read -r package; do
   case "$mode" in
     excluded) action=skip ;;
     inherit|full|properties|build|observe) ;;
-    *) mode="invalid:${mode:-unreadable}"; action=skip ;;
+    *) [ "$mode" = invalid ] || mode="invalid:${mode:-unreadable}"; action=skip ;;
   esac
   echo "candidate=$package reason=${reason:-unknown} rule=$rule mode=$mode action=$action" \
     "hardening=$(hardening_of "$package")" >> "$TMP/decisions"
